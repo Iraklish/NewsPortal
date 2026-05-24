@@ -1,0 +1,623 @@
+// API base resolution, in order of precedence:
+//   1. NEXT_PUBLIC_API_BASE — explicit override (e.g. "https://api.example.com").
+//   2. In the browser: same host as the page, port 8000 (so a remote user opening
+//      http://10.0.0.5:3000 will call http://10.0.0.5:8000 instead of localhost).
+//   3. SSR fallback: localhost:8000 (only used at build time).
+function resolveBase(): string {
+  const env = process.env.NEXT_PUBLIC_API_BASE
+  if (env && env.trim()) return env.trim().replace(/\/$/, '')
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:8000`
+  }
+  return 'http://localhost:8000'
+}
+
+const BASE = resolveBase()
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, options)
+  if (!res.ok) {
+    const text = await res.text()
+    // FastAPI wraps errors in {"detail": "..."} (or an array). Unwrap for cleaner messages.
+    let msg = text || `HTTP ${res.status}`
+    try {
+      const json = JSON.parse(text)
+      if (typeof json?.detail === 'string') msg = json.detail
+      else if (Array.isArray(json?.detail)) msg = json.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ')
+    } catch {}
+    throw new Error(msg)
+  }
+  return res.json() as Promise<T>
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface Article {
+  id: number
+  url: string
+  title: string
+  source?: string
+  category?: string
+  published_at?: string
+  fetched_at: string
+  content?: string
+  summary?: string
+  author?: string
+  image_url?: string
+  is_analyzed: boolean
+}
+
+export type ImpactType = 'highly_positive' | 'positive' | 'neutral' | 'negative' | 'highly_negative'
+
+export interface Analysis {
+  id: number
+  article_id?: number
+  created_at: string
+  focus?: string
+  model_used?: string
+  summary?: string
+  impact_type?: ImpactType
+  economic_impact?: string
+  market_analysis?: string
+  geopolitical_factors?: string
+  risk_assessment?: string
+  opportunities?: string
+  prognosis_short?: string
+  prognosis_long?: string
+  key_indicators: string[]
+  affected_sectors: string[]
+  affected_regions: string[]
+  categories: Record<string, string[]>
+  confidence_score?: number
+}
+
+export interface DirectedReportRequest {
+  focus: string
+  include_web?: boolean
+  time_window_hours?: number
+  max_web_results?: number
+  fetch_web_content?: boolean
+}
+
+export interface DirectedReportRef {
+  kind: 'db' | 'web' | 'article'
+  id?: number
+  title?: string
+  url?: string
+  source?: string
+  published_at?: string
+  snippet?: string
+}
+
+export interface ChatResponse {
+  response: string
+  needs_web?: boolean
+  web_query?: string
+  used_web?: boolean
+  references?: DirectedReportRef[]
+  suggested_web_query?: string
+}
+
+export interface DirectedReport {
+  id: number
+  focus: string
+  created_at: string
+  model_used?: string
+  headline?: string
+  executive_summary?: string
+  key_developments: string[]
+  economic_impact?: string
+  market_impact?: string
+  geopolitical_impact?: string
+  sector_impact: Record<string, string>
+  risk_assessment?: string
+  opportunities?: string
+  contrarian_views?: string
+  prognosis_short?: string
+  prognosis_long?: string
+  signals_to_watch: string[]
+  confidence_score?: number
+  impact_type?: ImpactType
+  references: DirectedReportRef[]
+  db_article_count: number
+  web_result_count: number
+}
+
+export interface StockSearchResult {
+  ticker: string
+  name: string
+  exchange?: string
+  type?: string
+}
+
+export interface StockPricePoint {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+export interface StockAnalysis {
+  id: number
+  ticker: string
+  company_name?: string
+  created_at: string
+  price?: number
+  change_pct?: number
+  market_cap?: number
+  sector?: string
+  summary?: string
+  technical_summary?: string
+  news_impact?: string
+  prognosis_short?: string
+  prognosis_long?: string
+  impact_type?: string
+  risk_level?: string
+  confidence_score?: number
+  key_levels: Record<string, number>
+  catalysts: string[]
+  price_history: StockPricePoint[]
+  quote_snapshot: Record<string, unknown>
+}
+
+export interface KeyStatus {
+  has_key: boolean
+  provider?: string
+}
+
+export interface AppSettingsOut {
+  default_ai_provider: string
+  default_ai_model: string
+  anthropic_api_key: KeyStatus
+  openai_api_key: KeyStatus
+  gemini_api_key: KeyStatus
+  deepseek_api_key: KeyStatus
+  custom_ai_api_key: KeyStatus
+  fred_api_key: KeyStatus
+  alpha_vantage_api_key: KeyStatus
+  polygon_api_key: KeyStatus
+  google_search_api_key: KeyStatus
+  google_search_cx: KeyStatus
+  news_api_key: KeyStatus
+  custom_ai_endpoint?: string
+  custom_ai_model?: string
+  chat_system_prompt: string
+  ask_system_prompt: string
+  chat_system_prompt_default: string
+  ask_system_prompt_default: string
+  chat_system_prompt_customized: boolean
+  ask_system_prompt_customized: boolean
+  auto_analyze_enabled: boolean
+}
+
+export interface SettingsUpdate {
+  default_ai_provider?: string
+  default_ai_model?: string
+  anthropic_api_key?: string
+  openai_api_key?: string
+  gemini_api_key?: string
+  deepseek_api_key?: string
+  custom_ai_api_key?: string
+  custom_ai_endpoint?: string
+  custom_ai_model?: string
+  fred_api_key?: string
+  alpha_vantage_api_key?: string
+  polygon_api_key?: string
+  google_search_api_key?: string
+  google_search_cx?: string
+  news_api_key?: string
+  chat_system_prompt?: string
+  ask_system_prompt?: string
+  auto_analyze_enabled?: boolean
+}
+
+export interface MindMapNode {
+  kind: string
+  explanation: string
+  items: string[]
+}
+
+export interface MindMapAspect {
+  summary: string
+  reasoning: string
+  whyItMatters: string
+  categories: MindMapNode[]
+}
+
+export interface MindMapData {
+  subject: string
+  summary: string
+  reasoning: string
+  whyItMatters: string
+  outcome: string
+  prognosis: { shortTerm: string; longTerm: string }
+  aspects: Record<string, MindMapAspect>
+}
+
+export interface MindMapOut {
+  id: number
+  subject: string
+  created_at: string
+  aspects: string[]
+  model_used?: string
+  map_data: MindMapData
+}
+
+// ─── Articles ─────────────────────────────────────────────────────────────────
+
+export const articlesApi = {
+  list(params?: { skip?: number; limit?: number; category?: string; q?: string }) {
+    const qp = new URLSearchParams()
+    if (params?.skip !== undefined) qp.set('skip', String(params.skip))
+    if (params?.limit !== undefined) qp.set('limit', String(params.limit))
+    if (params?.category) qp.set('category', params.category)
+    if (params?.q) qp.set('q', params.q)
+    const qs = qp.toString()
+    return request<Article[]>(`/articles${qs ? '?' + qs : ''}`)
+  },
+
+  categories() {
+    return request<string[]>('/articles/categories')
+  },
+
+  count(params?: { category?: string; q?: string }) {
+    const qp = new URLSearchParams()
+    if (params?.category) qp.set('category', params.category)
+    if (params?.q) qp.set('q', params.q)
+    const qs = qp.toString()
+    return request<{ count: number }>(`/articles/count${qs ? '?' + qs : ''}`)
+  },
+
+  fetchAll() {
+    return request<{ fetched: number; new_article_ids: number[] }>('/articles/fetch-all', { method: 'POST' })
+  },
+
+  get(id: number) {
+    return request<Article>(`/articles/${id}`)
+  },
+
+  delete(id: number) {
+    return request<void>(`/articles/${id}`, { method: 'DELETE' })
+  },
+
+  fetchFeed(body: { url: string; category?: string }) {
+    return request<Article[]>('/articles/fetch-feed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  addManual(body: {
+    title?: string
+    content: string
+    summary?: string
+    source?: string
+    category?: string
+    url?: string
+    author?: string
+    published_at?: string
+    is_html?: boolean
+  }) {
+    return request<Article>('/articles/manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  addFromUrl(body: { url: string; category?: string }) {
+    return request<Article>('/articles/from-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  addFromDocument(file: File, opts?: { title?: string; category?: string; source?: string }) {
+    const fd = new FormData()
+    fd.append('file', file)
+    if (opts?.title) fd.append('title', opts.title)
+    if (opts?.category) fd.append('category', opts.category)
+    if (opts?.source) fd.append('source', opts.source)
+    return request<Article>('/articles/from-document', {
+      method: 'POST',
+      body: fd,
+    })
+  },
+
+  trendingTopics(params?: { limit?: number; hours?: number }) {
+    const qp = new URLSearchParams()
+    if (params?.limit !== undefined) qp.set('limit', String(params.limit))
+    if (params?.hours !== undefined) qp.set('hours', String(params.hours))
+    const qs = qp.toString()
+    return request<{ topics: string[] }>(`/articles/trending-topics${qs ? '?' + qs : ''}`)
+  },
+}
+
+// ─── Analysis ─────────────────────────────────────────────────────────────────
+
+export const analysisApi = {
+  list(params?: { skip?: number; limit?: number }) {
+    const q = new URLSearchParams()
+    if (params?.skip !== undefined) q.set('skip', String(params.skip))
+    if (params?.limit !== undefined) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<Analysis[]>(`/analysis${qs ? '?' + qs : ''}`)
+  },
+
+  get(id: number) {
+    return request<Analysis>(`/analysis/${id}`)
+  },
+
+  analyzeArticle(articleId: number, focus?: string) {
+    const qs = focus ? `?focus=${encodeURIComponent(focus)}` : ''
+    return request<Analysis>(`/analysis/article/${articleId}${qs}`, { method: 'POST' })
+  },
+
+  askAboutArticle(articleId: number, question: string, history: { role: string; content: string }[] = []) {
+    return request<{ response: string }>(`/analysis/article/${articleId}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, history }),
+    })
+  },
+
+  listForArticle(articleId: number) {
+    return request<Analysis[]>(`/analysis?article_id=${articleId}`)
+  },
+
+  previewDirected(focus: string, time_window_hours: number) {
+    const qs = new URLSearchParams({ focus, time_window_hours: String(time_window_hours) })
+    return request<{ db_article_count: number }>(`/analysis/directed/preview?${qs}`)
+  },
+
+  // Directed synthesis report — see DirectedReport interface
+  runDirectedReport(req: DirectedReportRequest) {
+    return request<DirectedReport>('/analysis/directed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+  },
+
+  listReports() {
+    return request<DirectedReport[]>('/analysis/reports')
+  },
+
+  getReport(id: number) {
+    return request<DirectedReport>(`/analysis/reports/${id}`)
+  },
+
+  deleteReport(id: number) {
+    return request<void>(`/analysis/reports/${id}`, { method: 'DELETE' })
+  },
+
+  chat(req: { message: string; history?: { role: string; content: string }[]; use_web?: boolean; web_query?: string }) {
+    return request<ChatResponse>('/analysis/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+  },
+
+  delete(id: number) {
+    return request<void>(`/analysis/${id}`, { method: 'DELETE' })
+  },
+}
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+
+export const settingsApi = {
+  get() {
+    return request<AppSettingsOut>('/settings')
+  },
+
+  update(data: SettingsUpdate) {
+    return request<{ updated: string[]; count: number }>('/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+  },
+
+  models(provider: string) {
+    return request<{ models: string[] }>(`/settings/models?provider=${encodeURIComponent(provider)}`)
+  },
+
+  resetKey(key: string) {
+    return request<{ reset: string; existed: boolean }>(`/settings/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    })
+  },
+}
+
+// ─── Sources ──────────────────────────────────────────────────────────────────
+
+export interface RssSource {
+  id: number
+  url: string
+  category: string
+  name?: string
+  enabled: boolean
+  created_at?: string
+  last_fetched_at?: string
+  last_status?: string
+  last_error?: string
+}
+
+export const sourcesApi = {
+  list(params?: { category?: string; enabled?: boolean }) {
+    const qp = new URLSearchParams()
+    if (params?.category) qp.set('category', params.category)
+    if (params?.enabled !== undefined) qp.set('enabled', String(params.enabled))
+    const qs = qp.toString()
+    return request<RssSource[]>(`/sources${qs ? '?' + qs : ''}`)
+  },
+
+  create(body: { url: string; category: string; name?: string; enabled?: boolean }) {
+    return request<RssSource>('/sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  update(id: number, body: Partial<{ url: string; category: string; name: string; enabled: boolean }>) {
+    return request<RssSource>(`/sources/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  delete(id: number) {
+    return request<void>(`/sources/${id}`, { method: 'DELETE' })
+  },
+
+  reseed() {
+    return request<{ added: number }>('/sources/reseed', { method: 'POST' })
+  },
+
+  bulkCreate(body: { urls: string[]; category: string; enabled?: boolean }) {
+    return request<{ added: number; duplicates: number; invalid: number; errors: string[] }>(
+      '/sources/bulk',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    )
+  },
+
+  categoryAction(body: { category: string; enabled?: boolean; rename_to?: string }) {
+    return request<{ category: string; rows: number; updated: number }>(
+      '/sources/category-action',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    )
+  },
+
+  deleteCategory(category: string) {
+    return request<{ deleted: number; category: string }>(
+      `/sources/category/${encodeURIComponent(category)}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  status() {
+    return request<{
+      total: number
+      enabled: number
+      ok: number
+      empty: number
+      error: number
+      last_fetch_at?: string | null
+      next_fetch_at?: string | null
+      fetch_interval_minutes: number
+    }>('/sources/status')
+  },
+}
+
+// ─── Stocks ───────────────────────────────────────────────────────────────────
+
+export const stocksApi = {
+  search(q: string) {
+    return request<StockSearchResult[]>(`/stocks/search?q=${encodeURIComponent(q)}`)
+  },
+
+  getQuote(ticker: string) {
+    return request<Record<string, unknown>>(`/stocks/${encodeURIComponent(ticker)}/quote`)
+  },
+
+  getHistory(ticker: string) {
+    return request<StockPricePoint[]>(`/stocks/${encodeURIComponent(ticker)}/history`)
+  },
+
+  analyze(ticker: string) {
+    return request<StockAnalysis>(`/stocks/${encodeURIComponent(ticker)}/analyze`, {
+      method: 'POST',
+    })
+  },
+
+  getAnalyses() {
+    return request<StockAnalysis[]>('/stocks/analyses')
+  },
+
+  getLatest(ticker: string) {
+    return request<StockAnalysis>(`/stocks/${encodeURIComponent(ticker)}/latest`)
+  },
+}
+
+// ─── Logs ────────────────────────────────────────────────────────────────────
+
+export interface LogListResponse {
+  source: 'app' | 'client'
+  path: string
+  count: number
+  size_bytes: number
+  lines: string[]
+}
+
+export interface LogFileInfo {
+  name: string
+  size_bytes: number
+  modified_at: string
+}
+
+export interface LogSettings {
+  log_retention_hours: number
+  log_level: string
+}
+
+export const logsApi = {
+  list(params?: { source?: 'app' | 'client'; limit?: number; level?: string; q?: string }) {
+    const qp = new URLSearchParams()
+    if (params?.source) qp.set('source', params.source)
+    if (params?.limit) qp.set('limit', String(params.limit))
+    if (params?.level) qp.set('level', params.level)
+    if (params?.q) qp.set('q', params.q)
+    return request<LogListResponse>(`/logs?${qp.toString()}`)
+  },
+
+  files() {
+    return request<{ dir: string; files: LogFileInfo[] }>('/logs/files')
+  },
+
+  getSettings() {
+    return request<LogSettings>('/logs/settings')
+  },
+
+  updateSettings(body: Partial<LogSettings>) {
+    return request<LogSettings>('/logs/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  clear(source: 'app' | 'client' | 'all') {
+    return request<{ cleared: string[] }>(`/logs?source=${source}`, { method: 'DELETE' })
+  },
+}
+
+// ─── MindMap ──────────────────────────────────────────────────────────────────
+
+export const mindmapApi = {
+  list() {
+    return request<MindMapOut[]>('/mindmap')
+  },
+
+  generate(subject: string, aspects: string[]) {
+    return request<MindMapOut>('/mindmap/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subject, aspects }),
+    })
+  },
+
+  get(id: number) {
+    return request<MindMapOut>(`/mindmap/${id}`)
+  },
+
+  delete(id: number) {
+    return request<void>(`/mindmap/${id}`, { method: 'DELETE' })
+  },
+}
