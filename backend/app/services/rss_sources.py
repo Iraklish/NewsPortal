@@ -15,6 +15,15 @@ RSS_FEEDS: dict[str, list[str]] = {
         "https://www.marketwatch.com/rss/topstories",
         "https://www.investing.com/rss/news.rss",
         "https://www.worldbank.org/en/news/all.rss",
+        # Finance & markets — verified working 2025-05
+        "https://feeds.bloomberg.com/markets/news.rss",
+        "http://rss.cnn.com/rss/money_latest.rss",
+        "https://www.sec.gov/news/pressreleases.rss",
+        "https://seekingalpha.com/market_currents.xml",
+        "https://www.kiplinger.com/rss",
+        "https://www.mckinsey.com/insights/rss",
+        "https://feeds.feedburner.com/zerohedge/feed",
+        "https://www.realclearmarkets.com/index.xml",
     ],
     "geopolitics": [
         "https://www.foreignaffairs.com/rss.xml",
@@ -26,6 +35,7 @@ RSS_FEEDS: dict[str, list[str]] = {
         "https://www.cnas.org/rss",
         "https://www.brookings.edu/topic/foreign-policy/feed/",
         "https://www.csis.org/analysis/feed",
+        "https://news.un.org/feed/subscribe/en/news/all/rss.xml",
     ],
     "technology": [
         "https://feeds.arstechnica.com/arstechnica/index",
@@ -52,13 +62,20 @@ RSS_FEEDS: dict[str, list[str]] = {
     "politics": [
         "https://feeds.reuters.com/Reuters/PoliticsNews",
         "https://www.politico.com/rss/politicopicks.xml",
+        "https://rss.politico.com/politics-news.xml",
         "https://thehill.com/news/feed/",
+        "https://thehill.com/homenews/feed/",
+        "https://thehill.com/homenews/senate/feed/",
+        "https://thehill.com/homenews/house/feed/",
         "https://www.realclearpolitics.com/index.xml",
         "https://feeds.npr.org/1014/rss.xml",
         "https://www.washingtonpost.com/wp-srv/rss/politics/index.xml",
         "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml",
         "https://www.axios.com/feeds/politics-policy.xml",
         "https://feeds.bbci.co.uk/news/politics/rss.xml",
+        "https://www.vox.com/rss/world-politics/index.xml",
+        "http://rss.cnn.com/rss/cnn_allpolitics.rss",
+        "http://feeds.foxnews.com/foxnews/politics",
     ],
     "israel": [
         # English — verified working
