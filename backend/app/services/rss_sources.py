@@ -314,6 +314,162 @@ RSS_FEEDS: dict[str, list[str]] = {
         "https://www.theguardian.com/world/ukraine/rss",
         "https://news.yahoo.com/rss/ukraine",
     ],
+
+    # ── Google News ──────────────────────────────────────────────────────────
+    "google_news": [
+        # Top Stories
+        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+        # World
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGh1ZHpBU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        # Nation (US)
+        "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNRE55ZVhCMEVnSmxiaWdBUAE?hl=en-US&gl=US&ceid=US:en",
+        # Business
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        # Technology
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGRqTVhZU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        # Science
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp0Y1RjU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        # Health
+        "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3QwTlRFU0FtVnVLQUFQAQ?hl=en-US&gl=US&ceid=US:en",
+        # Entertainment
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5RU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        # Sports
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdvU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+    ],
+
+    # ── Yahoo News ───────────────────────────────────────────────────────────
+    "yahoo_news": [
+        # Finance — Top Stories
+        "https://finance.yahoo.com/rss/topstories",
+        # Finance — All News
+        "https://finance.yahoo.com/news/rssindex",
+        # News — US
+        "https://news.yahoo.com/rss/us",
+        # News — World
+        "https://news.yahoo.com/rss/world",
+        # News — Politics
+        "https://news.yahoo.com/rss/politics",
+        # News — Tech
+        "https://news.yahoo.com/rss/tech",
+        # News — Entertainment
+        "https://news.yahoo.com/rss/entertainment",
+        # News — Health
+        "https://news.yahoo.com/rss/health",
+        # News — Science
+        "https://news.yahoo.com/rss/science",
+        # News — Sports
+        "https://news.yahoo.com/rss/sports",
+        # News — Business
+        "https://news.yahoo.com/rss/business",
+    ],
+
+    # ── Bing News ────────────────────────────────────────────────────────────
+    "bing_news": [
+        # Economy & Finance
+        "https://www.bing.com/news/search?q=economy&format=rss",
+        "https://www.bing.com/news/search?q=business+finance&format=rss",
+        "https://www.bing.com/news/search?q=stock+market&format=rss",
+        # Technology
+        "https://www.bing.com/news/search?q=technology+AI&format=rss",
+        # World News
+        "https://www.bing.com/news/search?q=world+news&format=rss",
+        # Politics
+        "https://www.bing.com/news/search?q=politics&format=rss",
+        # Science
+        "https://www.bing.com/news/search?q=science&format=rss",
+        # Health
+        "https://www.bing.com/news/search?q=health+medicine&format=rss",
+        # Sports
+        "https://www.bing.com/news/search?q=sports&format=rss",
+        # Geopolitics
+        "https://www.bing.com/news/search?q=geopolitics&format=rss",
+    ],
+
+    # ── Yandex News ──────────────────────────────────────────────────────────
+    "yandex_news": [
+        # Main (Russian)
+        "https://news.yandex.ru/index.rss",
+        # World
+        "https://news.yandex.ru/world.rss",
+        # Politics
+        "https://news.yandex.ru/politics.rss",
+        # Business
+        "https://news.yandex.ru/business.rss",
+        # Finance
+        "https://news.yandex.ru/finances.rss",
+        # Science
+        "https://news.yandex.ru/science.rss",
+        # Technology / Computers
+        "https://news.yandex.ru/computers.rss",
+        # Sports
+        "https://news.yandex.ru/sport.rss",
+        # Health
+        "https://news.yandex.ru/health.rss",
+        # Society
+        "https://news.yandex.ru/society.rss",
+        # Economy
+        "https://news.yandex.ru/economics.rss",
+    ],
+
+    # ── TipRanks ─────────────────────────────────────────────────────────────
+    "tipranks": [
+        # All blog posts
+        "https://blog.tipranks.com/feed/",
+        # Analyst Rankings
+        "https://blog.tipranks.com/category/analyst-rank/feed/",
+        # Stocks
+        "https://blog.tipranks.com/category/stocks/feed/",
+        # Market News
+        "https://blog.tipranks.com/category/market-news/feed/",
+        # Earnings
+        "https://blog.tipranks.com/category/earnings/feed/",
+        # ETFs
+        "https://blog.tipranks.com/category/etfs/feed/",
+        # Dividends
+        "https://blog.tipranks.com/category/dividends/feed/",
+        # Research & Analysis
+        "https://blog.tipranks.com/category/research/feed/",
+    ],
+
+    # ── Wall Street Journal (WSJ) ─────────────────────────────────────────────
+    "wsj": [
+        # Top Stories (all sections)
+        "https://feeds.a.dj.com/rss/RSSWSJ.xml",
+        # US Business
+        "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml",
+        # Markets
+        "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
+        # World News
+        "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
+        # Opinion
+        "https://feeds.a.dj.com/rss/RSSOpinion.xml",
+        # Life & Arts
+        "https://feeds.a.dj.com/rss/RSSLifestyle.xml",
+        # Personal Finance / Family
+        "https://feeds.a.dj.com/rss/RSSFamilyAndLife.xml",
+        # Dow Jones Newswires
+        "https://feeds.a.dj.com/rss/RSSWSJD.xml",
+    ],
+
+    # ── JP Morgan ─────────────────────────────────────────────────────────────
+    "jpmorgan": [
+        # Corporate News — JPMorgan Chase
+        "https://www.jpmorganchase.com/news.rss",
+        # Global Research — Current Events
+        "https://www.jpmorgan.com/insights/global-research/current-events/rss.xml",
+        # Global Research — Economy
+        "https://www.jpmorgan.com/insights/global-research/economy/rss.xml",
+        # Global Research — Markets
+        "https://www.jpmorgan.com/insights/global-research/markets/rss.xml",
+        # Economic Outlook
+        "https://www.jpmorgan.com/insights/outlook/economic-outlook/rss.xml",
+        # Market Outlook
+        "https://www.jpmorgan.com/insights/outlook/market-outlook/rss.xml",
+        # Asset Management Insights
+        "https://am.jpmorgan.com/us/en/asset-management/adv/insights/rss.xml",
+        # Private Banking Insights
+        "https://privatebank.jpmorgan.com/content/dam/jpm-pb-aem/global/en/insights/rss.xml",
+    ],
 }
 
 
