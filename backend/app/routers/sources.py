@@ -192,6 +192,45 @@ def delete_category(category: str, db: Session = Depends(get_db)):
     return {"deleted": len(rows), "category": cat}
 
 
+class BulkIdsIn(BaseModel):
+    ids: List[int]
+
+
+@router.post("/bulk-delete")
+def bulk_delete_sources(body: BulkIdsIn, db: Session = Depends(get_db)):
+    """Delete multiple RSS sources by their IDs in one request."""
+    if not body.ids:
+        return {"deleted": 0}
+    rows = db.query(RssSource).filter(RssSource.id.in_(body.ids)).all()
+    for src in rows:
+        db.delete(src)
+    db.commit()
+    logger.info("[bulk-delete] deleted %d sources: %s", len(rows), body.ids[:20])
+    return {"deleted": len(rows)}
+
+
+@router.post("/bulk-fetch")
+def bulk_fetch_sources(body: BulkIdsIn, db: Session = Depends(get_db)):
+    """Manually trigger an RSS fetch for a specific set of source IDs.
+    Runs each feed synchronously and returns total new-article count."""
+    from ..services.news_fetcher import _fetch_rss_feed  # local import to avoid circular
+    if not body.ids:
+        return {"sources_fetched": 0, "new_articles": 0}
+    sources = db.query(RssSource).filter(RssSource.id.in_(body.ids)).all()
+    new_ids: list[int] = []
+    errors = 0
+    for src in sources:
+        try:
+            ids = _fetch_rss_feed(src, db)
+            new_ids.extend(ids)
+        except Exception as exc:
+            errors += 1
+            logger.warning("[bulk-fetch] failed for source %d (%s): %s", src.id, src.url[:80], exc)
+    logger.info("[bulk-fetch] fetched %d sources → %d new articles (%d errors)",
+                len(sources), len(new_ids), errors)
+    return {"sources_fetched": len(sources), "new_articles": len(new_ids), "errors": errors}
+
+
 @router.post("/reseed")
 def reseed_sources(db: Session = Depends(get_db)):
     """Add any feeds from RSS_FEEDS that are missing from the DB (won't touch existing rows)."""

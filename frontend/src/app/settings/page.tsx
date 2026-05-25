@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { settingsApi, sourcesApi, type AppSettingsOut, type SettingsUpdate, type RssSource } from '@/lib/api'
-import { CheckCircle, AlertCircle, Eye, EyeOff, Save, RefreshCw, Trash2, Plus, Loader2, Rss, Cpu, MessageSquare, Database, Newspaper, RotateCcw, Search, ChevronDown, ChevronRight, Edit2, X, Check, Upload, Tag, Power } from 'lucide-react'
+import { CheckCircle, AlertCircle, Eye, EyeOff, Save, RefreshCw, Trash2, Plus, Loader2, Rss, Cpu, MessageSquare, Database, Newspaper, RotateCcw, Search, ChevronDown, ChevronRight, Edit2, X, Check, Upload, Tag, Power, Square, CheckSquare } from 'lucide-react'
 
 const AI_PROVIDERS = [
   { value: 'anthropic', label: 'Anthropic (Claude)' },
@@ -392,6 +392,9 @@ function SourcesManager() {
   const [adding, setAdding] = useState(false)
   const [bulkAdding, setBulkAdding] = useState(false)
 
+  // ── Selection ──────────────────────────────────────────────────────────────
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+
   async function load() {
     setLoading(true)
     try { setSources(await sourcesApi.list()) }
@@ -454,6 +457,33 @@ function SourcesManager() {
     finally { setBusy(false) }
   }
 
+  async function bulkDeleteSelected() {
+    const ids = [...selected]
+    if (!ids.length) return
+    if (!confirm(`Delete ${ids.length} selected feed${ids.length === 1 ? '' : 's'}?\nThis cannot be undone.`)) return
+    setBusy(true)
+    try {
+      const res = await sourcesApi.bulkDelete(ids)
+      clearSelection()
+      flash(`Deleted ${res.deleted} feed${res.deleted === 1 ? '' : 's'}`)
+      await load()
+    } catch (e: unknown) { flash(e instanceof Error ? e.message : String(e), true) }
+    finally { setBusy(false) }
+  }
+
+  async function bulkFetchSelected() {
+    const ids = [...selected]
+    if (!ids.length) return
+    setBusy(true)
+    flash(`Fetching ${ids.length} feed${ids.length === 1 ? '' : 's'}…`)
+    try {
+      const res = await sourcesApi.bulkFetch(ids)
+      flash(`Fetched ${res.sources_fetched} feeds → ${res.new_articles} new article${res.new_articles === 1 ? '' : 's'}${res.errors ? ` (${res.errors} errors)` : ''}`)
+      await load()
+    } catch (e: unknown) { flash(e instanceof Error ? e.message : String(e), true) }
+    finally { setBusy(false) }
+  }
+
   function toggleCollapsed(cat: string) {
     setCollapsed(prev => {
       const next = new Set(prev)
@@ -461,6 +491,12 @@ function SourcesManager() {
       return next
     })
   }
+
+  // ── Selection helpers (need `filtered` below) ─────────────────────────────
+  function toggleSelect(id: number) {
+    setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  function clearSelection() { setSelected(new Set()) }
 
   // Counts + grouping
   const counts = {
@@ -486,6 +522,7 @@ function SourcesManager() {
     }
     return true
   })
+  function selectAll() { setSelected(new Set(filtered.map(s => s.id))) }
 
   const grouped = new Map<string, RssSource[]>()
   for (const s of filtered) {
@@ -560,6 +597,44 @@ function SourcesManager() {
       {info && <p className="text-xs text-emerald-400">{info}</p>}
       {error && <p className="text-xs text-red-400">{error}</p>}
 
+      {/* ── Bulk-selection action bar ─────────────────────────────────────── */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-indigo-600/10 border border-indigo-500/30 rounded-lg flex-wrap">
+          <span className="text-xs font-semibold text-indigo-300 flex-shrink-0">
+            {selected.size} selected
+          </span>
+          <button
+            onClick={selectAll}
+            className="text-xs text-slate-400 hover:text-white underline underline-offset-2 flex-shrink-0"
+          >
+            Select all visible ({filtered.length})
+          </button>
+          <button
+            onClick={clearSelection}
+            className="text-xs text-slate-500 hover:text-white flex-shrink-0"
+          >
+            Clear
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={bulkFetchSelected}
+            disabled={busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 disabled:opacity-50 border border-emerald-500/30 rounded text-xs text-emerald-300 font-medium transition-colors"
+          >
+            {busy ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+            Fetch Selected ({selected.size})
+          </button>
+          <button
+            onClick={bulkDeleteSelected}
+            disabled={busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 disabled:opacity-50 border border-red-500/30 rounded text-xs text-red-300 font-medium transition-colors"
+          >
+            {busy ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+            Delete Selected ({selected.size})
+          </button>
+        </div>
+      )}
+
       {/* Grouped list */}
       {loading ? (
         <p className="text-xs text-slate-500">Loading…</p>
@@ -579,6 +654,30 @@ function SourcesManager() {
             return (
               <div key={cat} className="border border-[#1e2433] rounded-lg overflow-hidden bg-[#0a0f1e]">
                 <div className="flex items-center gap-2 px-3 py-2 bg-[#0d1117] hover:bg-[#11161f] transition-colors">
+                  {/* Category-level select-all checkbox */}
+                  {(() => {
+                    const catIds = rows.map(s => s.id)
+                    const allSel = catIds.every(id => selected.has(id))
+                    const someSel = catIds.some(id => selected.has(id))
+                    return (
+                      <button
+                        onClick={() => {
+                          setSelected(prev => {
+                            const n = new Set(prev)
+                            if (allSel) catIds.forEach(id => n.delete(id))
+                            else catIds.forEach(id => n.add(id))
+                            return n
+                          })
+                        }}
+                        className="flex-shrink-0 text-slate-500 hover:text-indigo-400 transition-colors"
+                        title={allSel ? 'Deselect category' : 'Select all in category'}
+                      >
+                        {allSel ? <CheckSquare size={13} className="text-indigo-400" />
+                          : someSel ? <CheckSquare size={13} className="text-indigo-300/50" />
+                          : <Square size={13} />}
+                      </button>
+                    )
+                  })()}
                   <button onClick={() => toggleCollapsed(cat)} className="text-slate-500 hover:text-white flex-shrink-0">
                     {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                   </button>
@@ -617,7 +716,17 @@ function SourcesManager() {
                 {!isCollapsed && (
                   <div className="divide-y divide-[#1e2433]">
                     {rows.map(s => (
-                      <SourceRow key={s.id} source={s} categories={allCats} onChange={load} onToggle={toggle} onRemove={remove} flash={flash} />
+                      <SourceRow
+                        key={s.id}
+                        source={s}
+                        categories={allCats}
+                        onChange={load}
+                        onToggle={toggle}
+                        onRemove={remove}
+                        flash={flash}
+                        selected={selected.has(s.id)}
+                        onSelect={toggleSelect}
+                      />
                     ))}
                   </div>
                 )}
@@ -675,13 +784,15 @@ function relTime(iso?: string | null): string {
   return `${Math.round(h / 24)} d ago`
 }
 
-function SourceRow({ source, categories, onChange, onToggle, onRemove, flash }: {
+function SourceRow({ source, categories, onChange, onToggle, onRemove, flash, selected, onSelect }: {
   source: RssSource
   categories: string[]
   onChange: () => Promise<void>
   onToggle: (s: RssSource) => Promise<void>
   onRemove: (s: RssSource) => Promise<void>
   flash: (m: string, err?: boolean) => void
+  selected?: boolean
+  onSelect?: (id: number) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [url, setUrl] = useState(source.url)
@@ -716,7 +827,22 @@ function SourceRow({ source, categories, onChange, onToggle, onRemove, flash }: 
   }[source.last_status || ''] || 'text-slate-500 bg-slate-500/5 border-slate-500/20'
 
   return (
-    <div className="px-3 py-1.5 hover:bg-white/5 transition-colors flex items-center gap-2 text-xs">
+    <div className={clsx(
+      'px-3 py-1.5 transition-colors flex items-center gap-2 text-xs',
+      selected ? 'bg-indigo-500/5 hover:bg-indigo-500/10' : 'hover:bg-white/5',
+    )}>
+      {/* Selection checkbox */}
+      <button
+        onClick={() => onSelect?.(source.id)}
+        className={clsx(
+          'flex-shrink-0 transition-colors',
+          selected ? 'text-indigo-400' : 'text-slate-600 hover:text-slate-400',
+        )}
+        title={selected ? 'Deselect' : 'Select'}
+      >
+        {selected ? <CheckSquare size={13} /> : <Square size={13} />}
+      </button>
+      {/* Enable/disable checkbox */}
       <input
         type="checkbox"
         checked={source.enabled}

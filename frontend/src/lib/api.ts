@@ -502,6 +502,25 @@ export const sourcesApi = {
     )
   },
 
+  bulkDelete(ids: number[]) {
+    return request<{ deleted: number }>('/sources/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    })
+  },
+
+  bulkFetch(ids: number[]) {
+    return request<{ sources_fetched: number; new_articles: number; errors: number }>(
+      '/sources/bulk-fetch',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      },
+    )
+  },
+
   status() {
     return request<{
       total: number
