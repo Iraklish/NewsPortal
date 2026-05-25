@@ -316,25 +316,26 @@ RSS_FEEDS: dict[str, list[str]] = {
     ],
 
     # ── Google News ──────────────────────────────────────────────────────────
+    # Uses search-based RSS (stable) — topic-ID feeds are locale-specific and break
     "google_news": [
-        # Top Stories
+        # Top Stories (US)
         "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
-        # World
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGh1ZHpBU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
-        # Nation (US)
-        "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNRE55ZVhCMEVnSmxiaWdBUAE?hl=en-US&gl=US&ceid=US:en",
+        # World News
+        "https://news.google.com/rss/search?q=world+news&hl=en-US&gl=US&ceid=US:en",
         # Business
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=business+news&hl=en-US&gl=US&ceid=US:en",
         # Technology
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGRqTVhZU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=technology+news&hl=en-US&gl=US&ceid=US:en",
         # Science
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp0Y1RjU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=science+news&hl=en-US&gl=US&ceid=US:en",
         # Health
-        "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3QwTlRFU0FtVnVLQUFQAQ?hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=health+news&hl=en-US&gl=US&ceid=US:en",
         # Entertainment
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5RU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=entertainment+news&hl=en-US&gl=US&ceid=US:en",
         # Sports
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdvU0FtVnVHZ0pWVXlBQlAB?hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=sports+news&hl=en-US&gl=US&ceid=US:en",
+        # Politics
+        "https://news.google.com/rss/search?q=politics+news&hl=en-US&gl=US&ceid=US:en",
     ],
 
     # ── Yahoo News ───────────────────────────────────────────────────────────
@@ -364,25 +365,29 @@ RSS_FEEDS: dict[str, list[str]] = {
     ],
 
     # ── Bing News ────────────────────────────────────────────────────────────
+    # Requires mkt=en-US&cc=US to return English content. Specific multi-word
+    # queries avoid Bing routing the request to an HTML category page.
     "bing_news": [
-        # Economy & Finance
-        "https://www.bing.com/news/search?q=economy&format=rss",
-        "https://www.bing.com/news/search?q=business+finance&format=rss",
-        "https://www.bing.com/news/search?q=stock+market&format=rss",
-        # Technology
-        "https://www.bing.com/news/search?q=technology+AI&format=rss",
-        # World News
-        "https://www.bing.com/news/search?q=world+news&format=rss",
+        # Economy
+        "https://www.bing.com/news/search?q=economy+markets&format=rss&mkt=en-US&cc=US",
+        # Business & Finance
+        "https://www.bing.com/news/search?q=business+finance+news&format=rss&mkt=en-US&cc=US",
+        # Stock Market
+        "https://www.bing.com/news/search?q=stock+market+investing&format=rss&mkt=en-US&cc=US",
+        # Technology & AI
+        "https://www.bing.com/news/search?q=tech+industry+AI&format=rss&mkt=en-US&cc=US",
+        # International News
+        "https://www.bing.com/news/search?q=international+news+today&format=rss&mkt=en-US&cc=US",
         # Politics
-        "https://www.bing.com/news/search?q=politics&format=rss",
-        # Science
-        "https://www.bing.com/news/search?q=science&format=rss",
-        # Health
-        "https://www.bing.com/news/search?q=health+medicine&format=rss",
+        "https://www.bing.com/news/search?q=US+politics+congress&format=rss&mkt=en-US&cc=US",
+        # Science & Research
+        "https://www.bing.com/news/search?q=science+research+discoveries&format=rss&mkt=en-US&cc=US",
+        # Health & Medicine
+        "https://www.bing.com/news/search?q=health+medicine+research&format=rss&mkt=en-US&cc=US",
         # Sports
-        "https://www.bing.com/news/search?q=sports&format=rss",
+        "https://www.bing.com/news/search?q=sports+championship+results&format=rss&mkt=en-US&cc=US",
         # Geopolitics
-        "https://www.bing.com/news/search?q=geopolitics&format=rss",
+        "https://www.bing.com/news/search?q=geopolitics+global+conflict&format=rss&mkt=en-US&cc=US",
     ],
 
     # ── Yandex News ──────────────────────────────────────────────────────────
@@ -432,9 +437,8 @@ RSS_FEEDS: dict[str, list[str]] = {
     ],
 
     # ── Wall Street Journal (WSJ) ─────────────────────────────────────────────
+    # All feeds below verified working via feeds.a.dj.com
     "wsj": [
-        # Top Stories (all sections)
-        "https://feeds.a.dj.com/rss/RSSWSJ.xml",
         # US Business
         "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml",
         # Markets
@@ -445,30 +449,26 @@ RSS_FEEDS: dict[str, list[str]] = {
         "https://feeds.a.dj.com/rss/RSSOpinion.xml",
         # Life & Arts
         "https://feeds.a.dj.com/rss/RSSLifestyle.xml",
-        # Personal Finance / Family
-        "https://feeds.a.dj.com/rss/RSSFamilyAndLife.xml",
         # Dow Jones Newswires
         "https://feeds.a.dj.com/rss/RSSWSJD.xml",
     ],
 
     # ── JP Morgan ─────────────────────────────────────────────────────────────
+    # JP Morgan does not publish native public RSS feeds. We use Google News
+    # search RSS to surface JP Morgan research, commentary, and corporate news.
     "jpmorgan": [
-        # Corporate News — JPMorgan Chase
-        "https://www.jpmorganchase.com/news.rss",
-        # Global Research — Current Events
-        "https://www.jpmorgan.com/insights/global-research/current-events/rss.xml",
-        # Global Research — Economy
-        "https://www.jpmorgan.com/insights/global-research/economy/rss.xml",
-        # Global Research — Markets
-        "https://www.jpmorgan.com/insights/global-research/markets/rss.xml",
-        # Economic Outlook
-        "https://www.jpmorgan.com/insights/outlook/economic-outlook/rss.xml",
-        # Market Outlook
-        "https://www.jpmorgan.com/insights/outlook/market-outlook/rss.xml",
-        # Asset Management Insights
-        "https://am.jpmorgan.com/us/en/asset-management/adv/insights/rss.xml",
-        # Private Banking Insights
-        "https://privatebank.jpmorgan.com/content/dam/jpm-pb-aem/global/en/insights/rss.xml",
+        # JPMorgan Chase corporate news & press releases
+        "https://news.google.com/rss/search?q=JPMorgan+Chase&hl=en-US&gl=US&ceid=US:en",
+        # JP Morgan markets & investment outlook
+        "https://news.google.com/rss/search?q=JPMorgan+markets+outlook&hl=en-US&gl=US&ceid=US:en",
+        # JP Morgan economic analysis & forecasts
+        "https://news.google.com/rss/search?q=JPMorgan+economic+analysis&hl=en-US&gl=US&ceid=US:en",
+        # JP Morgan asset management insights
+        "https://news.google.com/rss/search?q=JPMorgan+asset+management+insights&hl=en-US&gl=US&ceid=US:en",
+        # Jamie Dimon commentary & leadership
+        "https://news.google.com/rss/search?q=JPMorgan+Jamie+Dimon+strategy&hl=en-US&gl=US&ceid=US:en",
+        # JP Morgan research notes & reports
+        "https://news.google.com/rss/search?q=%22JP+Morgan%22+research+report&hl=en-US&gl=US&ceid=US:en",
     ],
 }
 
