@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from .database import SessionLocal, init_db
 from .logging_config import configure_logging
 from .routers import analysis, articles, logs, mindmap, settings, sources, stocks
-from .services.scheduler import start_scheduler, stop_scheduler
 
 
 @asynccontextmanager
@@ -19,11 +18,10 @@ async def lifespan(app: FastAPI):
         configure_logging(db)
     finally:
         db.close()
-    start_scheduler()
-    try:
-        yield
-    finally:
-        stop_scheduler()
+    # NOTE: periodic fetching is handled by the separate scheduler process
+    # (app/scheduler_process.py).  Start it independently:
+    #   cd backend && python -m app.scheduler_process
+    yield
 
 
 app = FastAPI(title="NewsPortal API", version="1.0.0", lifespan=lifespan)

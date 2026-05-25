@@ -233,16 +233,12 @@ def reset_setting(key: str, db: Session = Depends(get_db)):
 
 @router.put("")
 def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
-    from ..services.scheduler import reschedule_fetch
-
     updated_keys = []
     update_dict = body.model_dump(exclude_none=True)
 
     _no_strip = {"chat_system_prompt", "ask_system_prompt"}
     _bool_keys = {"auto_analyze_enabled"}
     _int_keys = {"fetch_interval_minutes"}
-
-    new_interval: int | None = None
 
     for key, value in update_dict.items():
         if value is None:
@@ -253,8 +249,9 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
             val_int = max(1, int(value))
             _set_db(db, key, str(val_int))
             updated_keys.append(key)
-            if key == "fetch_interval_minutes":
-                new_interval = val_int
+            # NOTE: the separate scheduler process reads interval from DB on each
+            # cycle, so no further IPC is needed — the new value is picked up
+            # automatically on the next tick.
             continue
 
         # Booleans always save (true → "1", false → "0")
@@ -278,12 +275,5 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
 
     if updated_keys:
         db.commit()
-
-    # Apply live reschedule after commit so the DB value is durable first
-    if new_interval is not None:
-        try:
-            reschedule_fetch(new_interval)
-        except Exception as exc:
-            logger.warning("[settings] reschedule_fetch(%d) failed: %s", new_interval, exc)
 
     return {"updated": updated_keys, "count": len(updated_keys)}

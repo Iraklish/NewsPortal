@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings as app_settings
 from ..database import get_db
-from ..models import RssSource
+from ..models import AppSettings, RssSource
 from ..schemas import RssSourceCreate, RssSourceOut, RssSourceUpdate
 from ..services.rss_sources import RSS_FEEDS
 
@@ -20,15 +20,34 @@ logger = logging.getLogger(__name__)
 def sources_status(db: Session = Depends(get_db)):
     """Aggregate status: counts + most recent fetch + next scheduled fetch."""
     from datetime import timedelta
+
     all_sources = db.query(RssSource).all()
     enabled = [s for s in all_sources if s.enabled]
+
+    # Most recent fetch time from individual feed records
     last_fetch_at = None
     for s in enabled:
         if s.last_fetched_at and (last_fetch_at is None or s.last_fetched_at > last_fetch_at):
             last_fetch_at = s.last_fetched_at
 
-    interval = max(1, int(app_settings.fetch_interval_minutes))
-    next_fetch_at = (last_fetch_at + timedelta(minutes=interval)) if last_fetch_at else None
+    # Interval — read from DB so Settings UI changes are reflected immediately
+    def _db_val(key: str) -> str | None:
+        row = db.query(AppSettings).filter(AppSettings.key == key).first()
+        return row.value if row else None
+
+    try:
+        interval = max(1, int(_db_val("fetch_interval_minutes") or app_settings.fetch_interval_minutes))
+    except (TypeError, ValueError):
+        interval = max(1, int(app_settings.fetch_interval_minutes))
+
+    # Prefer the timestamp written by the scheduler process; fall back to estimate
+    next_fetch_at_str = _db_val("scheduler_next_run_at")
+    if next_fetch_at_str:
+        next_fetch_at = next_fetch_at_str  # already an ISO string
+    elif last_fetch_at:
+        next_fetch_at = (last_fetch_at + timedelta(minutes=interval)).isoformat()
+    else:
+        next_fetch_at = None
 
     ok = sum(1 for s in enabled if s.last_status == "ok")
     empty = sum(1 for s in enabled if s.last_status == "empty")
@@ -41,7 +60,7 @@ def sources_status(db: Session = Depends(get_db)):
         "empty": empty,
         "error": error,
         "last_fetch_at": last_fetch_at.isoformat() if last_fetch_at else None,
-        "next_fetch_at": next_fetch_at.isoformat() if next_fetch_at else None,
+        "next_fetch_at": next_fetch_at,
         "fetch_interval_minutes": interval,
     }
 
