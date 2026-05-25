@@ -64,7 +64,7 @@ export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
             <p className="text-slate-400 text-sm mt-0.5">{analysis.company_name}</p>
           )}
           <p className="text-xs text-slate-600 mt-1">
-            {new Date(analysis.created_at).toLocaleString()}
+            {new Date(analysis.created_at.endsWith('Z') ? analysis.created_at : analysis.created_at + 'Z').toLocaleString()}
           </p>
         </div>
         <div className="text-right">

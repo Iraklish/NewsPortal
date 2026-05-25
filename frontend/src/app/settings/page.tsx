@@ -330,7 +330,7 @@ export default function SettingsPage() {
                 {nextFetchAt && (
                   <div className="pb-1.5">
                     <p className="text-[10px] text-slate-500 mb-0.5">Next scheduled fetch</p>
-                    <p className="text-xs text-indigo-300 font-mono">{new Date(nextFetchAt).toLocaleTimeString()}</p>
+                    <p className="text-xs text-indigo-300 font-mono">{new Date(nextFetchAt.endsWith('Z') ? nextFetchAt : nextFetchAt + 'Z').toLocaleTimeString()}</p>
                   </div>
                 )}
               </div>

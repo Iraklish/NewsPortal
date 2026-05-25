@@ -99,7 +99,7 @@ export default function DirectedSummaryCard({
           <div className="flex items-center gap-2 mb-1">
             <ImpactBadge type={a.impact_type as ImpactType} size="sm" />
             <span className="text-xs text-slate-500">
-              {new Date(a.created_at).toLocaleTimeString()}
+              {new Date(a.created_at.endsWith('Z') ? a.created_at : a.created_at + 'Z').toLocaleTimeString()}
             </span>
           </div>
           <p className="text-sm text-slate-300">

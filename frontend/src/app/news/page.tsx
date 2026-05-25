@@ -312,7 +312,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
         const items: TimelineItem[] = rows.map(a => ({
           kind: 'analysis' as const,
           id: `a-${a.id}`,
-          at: a.created_at ? new Date(a.created_at).getTime() : Date.now(),
+          at: a.created_at ? new Date(a.created_at.endsWith('Z') ? a.created_at : a.created_at + 'Z').getTime() : Date.now(),
           analysis: a,
         }))
         items.sort((x, y) => x.at - y.at)
@@ -367,7 +367,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
           .concat({
             kind: 'analysis',
             id: `a-${result.id}`,
-            at: result.created_at ? new Date(result.created_at).getTime() : Date.now(),
+            at: result.created_at ? new Date(result.created_at.endsWith('Z') ? result.created_at : result.created_at + 'Z').getTime() : Date.now(),
             analysis: result,
           })
         )
