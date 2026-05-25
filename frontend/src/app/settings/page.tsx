@@ -32,6 +32,7 @@ export default function SettingsPage() {
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelsError, setModelsError] = useState('')
   const [nextFetchAt, setNextFetchAt] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState('')
 
   useEffect(() => {
     settingsApi.get().then(s => {
@@ -43,7 +44,9 @@ export default function SettingsPage() {
         ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '',
         fetch_interval_minutes: s.fetch_interval_minutes,
       })
-    }).catch(() => {}).finally(() => setLoading(false))
+    }).catch((e: unknown) => {
+      setLoadError(e instanceof Error ? e.message : 'Could not reach backend')
+    }).finally(() => setLoading(false))
     sourcesApi.status().then(s => setNextFetchAt(s.next_fetch_at ?? null)).catch(() => {})
   }, [])
 
@@ -104,7 +107,17 @@ export default function SettingsPage() {
     }
   }
 
-  if (loading) return <div className="text-slate-500 text-sm">Loading settings…</div>
+  if (loading) return <div className="text-slate-500 text-sm p-4">Loading settings…</div>
+  if (loadError) return (
+    <div className="flex items-center gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm max-w-lg">
+      <AlertCircle size={16} className="flex-shrink-0" />
+      <div>
+        <p className="font-semibold">Could not load settings</p>
+        <p className="text-red-400/70 text-xs mt-0.5">{loadError} — is the backend running on port 8000?</p>
+      </div>
+      <button onClick={() => { setLoadError(''); setLoading(true); settingsApi.get().then(s => { setSettings(s); setForm({ default_ai_provider: s.default_ai_provider, default_ai_model: s.default_ai_model, chat_system_prompt: s.chat_system_prompt_customized ? s.chat_system_prompt : '', ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '', fetch_interval_minutes: s.fetch_interval_minutes }) }).catch((e: unknown) => setLoadError(e instanceof Error ? e.message : 'Failed')).finally(() => setLoading(false)) }} className="ml-auto flex-shrink-0 p-1.5 hover:bg-red-500/20 rounded transition-colors"><RefreshCw size={14} /></button>
+    </div>
+  )
 
   return (
     <div className="max-w-3xl mx-auto">

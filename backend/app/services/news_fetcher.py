@@ -129,10 +129,15 @@ def _extract_article_text(html: str) -> str:
     return text[:15000] if len(text) > 200 else ""
 
 
+_ENRICH_CAP = 50  # max articles to enrich per scheduler run (prevents long event-loop blocks)
+
+
 async def _enrich_articles_fulltext(article_ids: list[int], db: Session) -> None:
     """Follow article URLs for newly stored entries whose content is thin (headline/teaser only).
 
-    Runs up to 8 concurrent HTTP fetches, then writes back to DB in one commit.
+    Runs up to 8 concurrent HTTP fetches (HTML parsing offloaded to a thread pool so
+    the async event loop stays responsive), then writes back to DB in one commit.
+    Capped at _ENRICH_CAP articles per run to bound worst-case latency.
     """
     if not article_ids:
         return
@@ -142,10 +147,17 @@ async def _enrich_articles_fulltext(article_ids: list[int], db: Session) -> None
     if not thin:
         return
 
+    # Cap per-run to avoid very long scheduler cycles
+    if len(thin) > _ENRICH_CAP:
+        logger.info("[fetcher] full-text enrichment: capping %d → %d articles this run",
+                    len(thin), _ENRICH_CAP)
+        thin = thin[:_ENRICH_CAP]
+
     logger.info("[fetcher] full-text enrichment: %d / %d new articles have thin content",
                 len(thin), len(article_ids))
 
     sem = asyncio.Semaphore(8)
+    loop = asyncio.get_event_loop()
 
     async def _get(url: str) -> str:
         async with sem:
@@ -160,11 +172,19 @@ async def _enrich_articles_fulltext(article_ids: list[int], db: Session) -> None
                     ct = resp.headers.get("content-type", "")
                     if "html" not in ct:
                         return ""
-                    return _extract_article_text(resp.text)
+                    # Offload CPU-bound BeautifulSoup parsing to a thread so the
+                    # event loop stays free to handle incoming API requests.
+                    return await loop.run_in_executor(None, _extract_article_text, resp.text)
+            except asyncio.CancelledError:
+                return ""
             except Exception:
                 return ""
 
-    texts = await asyncio.gather(*[_get(a.url) for a in thin], return_exceptions=True)
+    try:
+        texts = await asyncio.gather(*[_get(a.url) for a in thin], return_exceptions=True)
+    except asyncio.CancelledError:
+        logger.info("[fetcher] full-text enrichment cancelled (shutdown)")
+        return
 
     updated = 0
     for article, text in zip(thin, texts):

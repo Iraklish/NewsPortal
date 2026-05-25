@@ -54,8 +54,13 @@ async def fetch_and_analyze_job():
                 continue
             try:
                 await analyze_article(article, db)
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 logger.warning("[scheduler] analysis failed for article %s: %s", article_id, exc)
+    except asyncio.CancelledError:
+        # Server is shutting down — exit cleanly without a scary traceback.
+        logger.info("[scheduler] fetch job cancelled (server shutdown)")
     except Exception as exc:
         logger.exception("[scheduler] fetch_and_analyze_job failed: %s", exc)
     finally:
