@@ -63,6 +63,128 @@ def _strip_html(html: str) -> str:
     return BeautifulSoup(html, "lxml").get_text(separator=" ", strip=True)
 
 
+# ── Full-text extraction ─────────────────────────────────────────────────────
+
+# Articles whose stored content is shorter than this are candidates for
+# full-page enrichment (headline-only or brief teaser from RSS).
+_CONTENT_MIN_CHARS = 500
+
+_JUNK_KEYWORDS = {
+    "ad", "ads", "advert", "advertisement", "banner", "promo", "sponsor",
+    "sidebar", "widget", "comment", "social", "share", "newsletter",
+    "subscribe", "popup", "modal", "cookie", "gdpr", "paywall",
+    "related", "recommendation", "toolbar", "breadcrumb", "pagination",
+    "footer", "header", "nav", "navigation", "menu",
+}
+
+# Semantic selectors tried in priority order
+_ARTICLE_SELECTORS = (
+    "[itemprop='articleBody']",
+    "article",
+    ".article-body", ".article-content", ".article__body", ".article__content",
+    ".story-body", ".story-content", ".story__body",
+    ".post-content", ".post-body", ".entry-content", ".entry-body",
+    ".content-body", ".content__body", ".main-content", ".page-content",
+    "#article-body", "#article-content", "#story-body", "#main-content",
+    "main",
+    "[role='main']",
+)
+
+
+def _extract_article_text(html: str) -> str:
+    """Extract main article body from raw HTML via BeautifulSoup."""
+    try:
+        soup = BeautifulSoup(html, "lxml")
+    except Exception:
+        return ""
+
+    # Remove non-content structural tags wholesale
+    for tag in soup.find_all(["script", "style", "nav", "header", "footer",
+                               "aside", "figcaption", "noscript", "form",
+                               "button", "iframe", "svg", "menu", "figure"]):
+        tag.decompose()
+
+    # Remove elements whose class/id signals boilerplate
+    for tag in soup.find_all(True):
+        combined = " ".join(tag.get("class") or []) + " " + (tag.get("id") or "")
+        if any(kw in combined.lower() for kw in _JUNK_KEYWORDS):
+            tag.decompose()
+
+    # Try semantic containers in priority order
+    for sel in _ARTICLE_SELECTORS:
+        node = soup.select_one(sel)
+        if node:
+            text = node.get_text(separator=" ", strip=True)
+            if len(text) > 200:
+                return text[:15000]
+
+    # Fallback: collect all meaningful <p> paragraphs from <body>
+    body = soup.body or soup
+    paras = [
+        p.get_text(" ", strip=True)
+        for p in body.find_all("p")
+        if len(p.get_text(strip=True)) > 40
+    ]
+    text = " ".join(paras)
+    return text[:15000] if len(text) > 200 else ""
+
+
+async def _enrich_articles_fulltext(article_ids: list[int], db: Session) -> None:
+    """Follow article URLs for newly stored entries whose content is thin (headline/teaser only).
+
+    Runs up to 8 concurrent HTTP fetches, then writes back to DB in one commit.
+    """
+    if not article_ids:
+        return
+
+    articles = db.query(Article).filter(Article.id.in_(article_ids)).all()
+    thin = [a for a in articles if not a.content or len(a.content) < _CONTENT_MIN_CHARS]
+    if not thin:
+        return
+
+    logger.info("[fetcher] full-text enrichment: %d / %d new articles have thin content",
+                len(thin), len(article_ids))
+
+    sem = asyncio.Semaphore(8)
+
+    async def _get(url: str) -> str:
+        async with sem:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(8.0),
+                    headers={"User-Agent": _USER_AGENT},
+                    follow_redirects=True,
+                    max_redirects=4,
+                ) as client:
+                    resp = await client.get(url)
+                    ct = resp.headers.get("content-type", "")
+                    if "html" not in ct:
+                        return ""
+                    return _extract_article_text(resp.text)
+            except Exception:
+                return ""
+
+    texts = await asyncio.gather(*[_get(a.url) for a in thin], return_exceptions=True)
+
+    updated = 0
+    for article, text in zip(thin, texts):
+        if isinstance(text, str) and text:
+            article.content = text
+            if not article.summary:
+                article.summary = text[:500]
+            updated += 1
+
+    if updated:
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.warning("[fetcher] full-text commit failed: %s", exc)
+
+    logger.info("[fetcher] full-text enrichment: updated %d / %d thin articles",
+                updated, len(thin))
+
+
 def _fetch_rss_feed(source: RssSource, db: Session) -> list[int]:
     """Parse a single RSS feed and store new entries. Returns new article IDs."""
     new_ids: list[int] = []
@@ -243,4 +365,8 @@ async def fetch_all_sources(db: Session) -> list[int]:
         new_ids.extend(ids)
 
     new_ids.extend(await _fetch_newsapi_all(db))
+
+    # Phase 2: follow article URLs to get full body for thin entries
+    await _enrich_articles_fulltext(new_ids, db)
+
     return new_ids
