@@ -20,6 +20,7 @@ from .config import settings as app_settings
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 APP_LOG = LOG_DIR / "app.log"
 CLIENT_LOG = LOG_DIR / "client.log"
+SCHEDULER_LOG = LOG_DIR / "scheduler.log"
 
 _FORMAT = "%(asctime)s %(levelname)-7s %(name)s — %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -73,14 +74,32 @@ def _make_rotating_handler(path: Path, retention_hours: int) -> TimedRotatingFil
     return handler
 
 
-def configure_logging(db=None) -> None:
-    """Install / reinstall our file handlers on the root + uvicorn loggers."""
+def configure_logging(db=None, app_log_path: Optional[Path] = None) -> None:
+    """Install / reinstall our file handlers on the root logger (and uvicorn loggers
+    when running as the API process).
+
+    Parameters
+    ----------
+    db:
+        Optional SQLAlchemy session used to read DB-overridable settings.
+    app_log_path:
+        Override the log file path.  Pass ``SCHEDULER_LOG`` from the scheduler
+        process so each process writes to its own file and Windows file-locking
+        during hourly rotation never affects the other process.  When *None*
+        (default) the API process uses the standard ``APP_LOG`` path and also
+        attaches handlers to the uvicorn loggers.
+    """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     retention = _resolve_retention_hours(db)
     level = _resolve_log_level(db)
 
+    log_path = app_log_path if app_log_path is not None else APP_LOG
+    # Only the API process (default path) needs uvicorn logger handlers.
+    is_api_process = app_log_path is None
+    managed_loggers = ("", "uvicorn", "uvicorn.access", "uvicorn.error") if is_api_process else ("",)
+
     # Remove previously installed handlers (idempotent reconfigure)
-    for logger_name in ("", "uvicorn", "uvicorn.access", "uvicorn.error"):
+    for logger_name in managed_loggers:
         lg = logging.getLogger(logger_name)
         for h in list(lg.handlers):
             if getattr(h, _HANDLER_TAG, False):
@@ -88,7 +107,7 @@ def configure_logging(db=None) -> None:
                 try: h.close()
                 except Exception: pass
 
-    app_handler = _make_rotating_handler(APP_LOG, retention)
+    app_handler = _make_rotating_handler(log_path, retention)
     app_handler.setLevel(level)
 
     root = logging.getLogger()
@@ -96,10 +115,12 @@ def configure_logging(db=None) -> None:
     root.addHandler(app_handler)
 
     # Uvicorn writes via its own loggers — attach the same file so request logs land too.
-    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
-        ulg = logging.getLogger(name)
-        ulg.addHandler(_make_rotating_handler(APP_LOG, retention))
-        ulg.setLevel(level)
+    # Only done for the API process; the scheduler has no uvicorn instance.
+    if is_api_process:
+        for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+            ulg = logging.getLogger(name)
+            ulg.addHandler(_make_rotating_handler(APP_LOG, retention))
+            ulg.setLevel(level)
 
 
 def get_client_logger() -> logging.Logger:
@@ -131,7 +152,8 @@ def prune_old_logs(retention_hours: Optional[int] = None) -> int:
         if not p.is_file():
             continue
         # Only touch our own files
-        if not (p.name.startswith("app.log") or p.name.startswith("client.log")):
+        if not (p.name.startswith("app.log") or p.name.startswith("client.log")
+                or p.name.startswith("scheduler.log")):
             continue
         try:
             if p.stat().st_mtime < cutoff:

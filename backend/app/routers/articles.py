@@ -1,7 +1,7 @@
 import hashlib
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -156,7 +156,7 @@ def trending_topics(
     from collections import Counter
     from datetime import timedelta
 
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
 
     rows = (
         db.query(Article.title, Article.category)
@@ -330,7 +330,7 @@ def _insert_article(
         raise HTTPException(status_code=422, detail="content is required")
 
     title = (title or "").strip() or None
-    synthetic_url = url or f"manual://{datetime.utcnow().timestamp()}/{hashlib.sha256((title or content[:200]).encode()).hexdigest()[:16]}"
+    synthetic_url = url or f"manual://{datetime.now(timezone.utc).replace(tzinfo=None).timestamp()}/{hashlib.sha256((title or content[:200]).encode()).hexdigest()[:16]}"
     hash_val = _url_hash(synthetic_url)
     if db.query(Article).filter(Article.url_hash == hash_val).first():
         raise HTTPException(status_code=409, detail="An article with this URL already exists")

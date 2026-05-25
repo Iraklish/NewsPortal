@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     polygon_api_key: str = ""
     google_search_api_key: str = ""
     google_search_cx: str = ""
+    bing_search_api_key: str = ""
     default_ai_provider: str = "anthropic"
     default_ai_model: str = "claude-sonnet-4-6"
 

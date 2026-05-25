@@ -8,7 +8,7 @@ Then asks the AI to produce a single structured synthesis with citations.
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -28,7 +28,7 @@ def _gather_db_articles(focus: str, db: Session, hours: int, hard_cap: int = 200
 
     `hard_cap` is a safety ceiling so a wildly popular topic doesn't blow the prompt.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
     keywords = [kw.strip() for kw in focus.split() if len(kw.strip()) > 2]
     query = db.query(Article)
     # Time window: prefer published_at when present, fall back to fetched_at.
@@ -54,7 +54,7 @@ def _gather_db_articles(focus: str, db: Session, hours: int, hard_cap: int = 200
 
 def count_db_articles(focus: str, db: Session, hours: int) -> int:
     """Lightweight count of DB articles matching focus in window (no row fetch)."""
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
     keywords = [kw.strip() for kw in focus.split() if len(kw.strip()) > 2]
     query = db.query(Article.id).filter(
         or_(
@@ -180,6 +180,7 @@ async def run_directed_report(
     focus: str,
     db: Session,
     include_web: bool = True,
+    include_web_search: bool = False,   # explicit multi-engine search (Google/DDG/Bing)
     time_window_hours: int = 24,
     max_web_results: int = 6,           # kept for API back-compat; ignored under grounding
     fetch_web_content: bool = False,    # kept for API back-compat; ignored under grounding
@@ -189,21 +190,34 @@ async def run_directed_report(
     With AI-native grounding, the model itself decides what to search and reports
     citations alongside the synthesis. We feed it the DB articles for grounding in
     your own corpus, and let it pull live web data on its own.
+
+    include_web_search=True forces an explicit multi-engine search (Google CSE /
+    DuckDuckGo / Bing) and injects the results as [WEB-N] context blocks before
+    calling the AI — regardless of whether native grounding is also enabled.
     """
     focus = focus.strip()
     if not focus:
         raise ValueError("focus is required")
 
     db_articles = _gather_db_articles(focus, db, time_window_hours)
-    if not db_articles and not include_web:
-        raise ValueError("No DB articles match this focus in the chosen window; enable web grounding or widen the window")
+    if not db_articles and not include_web and not include_web_search:
+        raise ValueError("No DB articles match this focus in the chosen window; enable web grounding or web search, or widen the window")
 
-    context_text, references = _build_context_block(db_articles, [])
+    # ── Step 0: explicit web search (always runs when requested) ─────────────
+    explicit_web_results: list[dict] = []
+    if include_web_search:
+        from .search_service import multi_engine_search
+        logger.info("[report] running explicit web search for '%s'", focus[:80])
+        explicit_web_results = await multi_engine_search(focus, db=db, num=8)
+        logger.info("[report] explicit web search: %d result(s)", len(explicit_web_results))
+
+    # Build initial context (DB articles + any explicit web results)
+    context_text, references = _build_context_block(db_articles, explicit_web_results)
     system, user = _build_prompts(focus, context_text)
 
     grounded_used = False
     if include_web:
-        # Tell the model to ground its synthesis with its built-in web search.
+        # ── Step 1: attempt AI-native grounding ─────────────────────────────
         system_grounded = (
             system
             + "\n\nADDITIONALLY: Use your built-in web search to find current information "
@@ -213,6 +227,7 @@ async def run_directed_report(
         grounded = await call_ai_grounded(system=system_grounded, user=user, max_tokens=4000, db=db)
         raw = grounded.text
         grounded_used = grounded.provider_used_grounding
+
         # Append the model-reported web citations to our references list.
         for c in grounded.citations:
             if not c.url:
@@ -225,6 +240,31 @@ async def run_directed_report(
                 "published_at": None,
                 "snippet": c.snippet,
             })
+
+        # ── Step 2: fallback to direct search when grounding yields nothing ─
+        # Only run if we didn't already inject explicit web results.
+        if not grounded.citations and not explicit_web_results:
+            logger.info(
+                "[report] grounding returned 0 web citations for '%s' — running search fallback",
+                focus[:80],
+            )
+            from .search_service import multi_engine_search
+            fallback_results = await multi_engine_search(focus, db=db, num=8)
+            if fallback_results:
+                logger.info(
+                    "[report] search fallback: %d result(s) — rebuilding context and re-calling AI",
+                    len(fallback_results),
+                )
+                # Rebuild context so the AI sees web snippets as [WEB-N] blocks it can cite.
+                context_text, references = _build_context_block(db_articles, fallback_results)
+                system, user = _build_prompts(focus, context_text)
+                raw = await call_ai(system=system, user=user, max_tokens=4000, db=db)
+            else:
+                logger.warning(
+                    "[report] search fallback also returned 0 results for '%s'; "
+                    "report will be based on DB articles only",
+                    focus[:80],
+                )
     else:
         raw = await call_ai(system=system, user=user, max_tokens=4000, db=db)
 

@@ -212,12 +212,12 @@ async def fetch_urls_concurrently(urls: list) -> list:
 
 # ── Google Search ─────────────────────────────────────────────────────────────
 
-async def google_search(query: str, date_restrict: str = None, num: int = 10) -> list:
+async def google_search(query: str, date_restrict: str = None, num: int = 10,
+                        api_key: str = None, cx: str = None) -> list:
     """Call Google Custom Search API and return structured results."""
-    api_key = settings.google_search_api_key
-    cx = settings.google_search_cx
+    api_key = api_key or settings.google_search_api_key
+    cx = cx or settings.google_search_cx
 
-    # Try reading from DB if settings object doesn't have them
     if not api_key or not cx:
         logger.warning("Google Search API key or CX not configured")
         return []
@@ -256,6 +256,239 @@ async def google_search(query: str, date_restrict: str = None, num: int = 10) ->
         })
 
     return results
+
+
+# ── DuckDuckGo search (free, no API key) ─────────────────────────────────────
+
+async def duckduckgo_search(query: str, num: int = 10) -> list[dict]:
+    """DuckDuckGo Lite endpoint — no API key needed, bot-resistant.
+
+    Uses https://lite.duckduckgo.com/lite/ which returns clean table HTML
+    without the anti-bot 202 challenges that the full HTML endpoint triggers.
+    """
+    try:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": _USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+            follow_redirects=True,
+            timeout=15.0,
+        ) as client:
+            r = await client.post(
+                "https://lite.duckduckgo.com/lite/",
+                data={"q": query},
+            )
+            r.raise_for_status()
+    except Exception as exc:
+        logger.warning("[ddg] request failed: %s", exc)
+        return []
+
+    soup = BeautifulSoup(r.text, "lxml")
+    results: list[dict] = []
+
+    for link_a in soup.select("a.result-link"):
+        href = link_a.get("href", "")
+        title = link_a.get_text(strip=True)
+        if not href or not title:
+            continue
+
+        # Snippet is in the next sibling <tr> after the link row.
+        snippet = ""
+        parent_row = link_a.find_parent("tr")
+        if parent_row:
+            snippet_row = parent_row.find_next_sibling("tr")
+            if snippet_row:
+                snippet = snippet_row.get_text(separator=" ", strip=True)
+
+        try:
+            source = urlparse(href).netloc.replace("www.", "")
+        except Exception:
+            source = ""
+
+        results.append({
+            "title": title,
+            "url": href,
+            "snippet": snippet,
+            "source": source,
+            "published_at": None,
+        })
+        if len(results) >= num:
+            break
+
+    return results
+
+
+# ── Bing Web Search API ───────────────────────────────────────────────────────
+
+async def bing_search_api(query: str, api_key: str, num: int = 10) -> list[dict]:
+    """Bing Web Search API v7 (requires key from portal.azure.com)."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                "https://api.bing.microsoft.com/v7.0/search",
+                headers={"Ocp-Apim-Subscription-Key": api_key},
+                params={"q": query, "count": min(num, 10), "mkt": "en-US"},
+            )
+            r.raise_for_status()
+            data = r.json()
+    except Exception as exc:
+        logger.warning("[bing-api] request failed: %s", exc)
+        return []
+    results: list[dict] = []
+    for item in data.get("webPages", {}).get("value", []):
+        url = item.get("url", "")
+        results.append({
+            "title": item.get("name"),
+            "url": url,
+            "snippet": item.get("snippet"),
+            "source": urlparse(url).netloc.replace("www.", "") if url else "",
+            "published_at": item.get("datePublished"),
+        })
+    return results
+
+
+# ── Bing HTML scraping (free, no key) ────────────────────────────────────────
+
+async def _bing_search_html(query: str, num: int = 10) -> list[dict]:
+    """Bing search via HTML scraping — key-free last resort.
+
+    Tries several CSS selector patterns across Bing layout versions.
+    """
+    headers = {
+        "User-Agent": _USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    try:
+        async with httpx.AsyncClient(
+            headers=headers,
+            follow_redirects=True,
+            timeout=15.0,
+        ) as client:
+            r = await client.get(
+                "https://www.bing.com/search",
+                params={"q": query, "count": min(num, 10), "setlang": "en"},
+            )
+            r.raise_for_status()
+    except Exception as exc:
+        logger.warning("[bing-html] request failed: %s", exc)
+        return []
+
+    soup = BeautifulSoup(r.text, "lxml")
+    results: list[dict] = []
+
+    # Try multiple selector patterns for different Bing layout versions
+    _RESULT_SELECTORS = [
+        ("li.b_algo", "h2 a", ".b_caption p, p"),        # classic layout
+        (".b_algo", "h2 a", ".b_caption p, p"),           # variant
+        ("#b_results > li", "h2 a", "p"),                 # bare list
+    ]
+
+    for container_sel, link_sel, snippet_sel in _RESULT_SELECTORS:
+        containers = soup.select(container_sel)
+        if not containers:
+            continue
+        for el in containers:
+            a = el.select_one(link_sel)
+            if not a:
+                continue
+            title = a.get_text(strip=True)
+            url = a.get("href", "")
+            if not url or not url.startswith("http") or not title:
+                continue
+            snippet_el = el.select_one(snippet_sel)
+            snippet = snippet_el.get_text(strip=True) if snippet_el else ""
+            try:
+                source = urlparse(url).netloc.replace("www.", "")
+            except Exception:
+                source = ""
+            results.append({
+                "title": title,
+                "url": url,
+                "snippet": snippet,
+                "source": source,
+                "published_at": None,
+            })
+            if len(results) >= num:
+                break
+        if results:
+            break  # Found results with this selector pattern, stop trying
+
+    return results
+
+
+# ── Multi-engine orchestrator ─────────────────────────────────────────────────
+
+async def multi_engine_search(query: str, db=None, num: int = 8) -> list[dict]:
+    """Try search engines in priority order; return first non-empty result set.
+
+    Priority:
+      1. Google Custom Search API  (if google_search_api_key + google_search_cx configured)
+      2. DuckDuckGo HTML           (free, no key needed)
+      3. Bing Web Search API       (if bing_search_api_key configured)
+      4. Bing HTML scraping        (free, last resort)
+    """
+
+    def _key(name: str) -> str:
+        """Read API key from AppSettings DB row, fall back to config."""
+        if db is not None:
+            try:
+                from ..models import AppSettings
+                row = db.query(AppSettings).filter(AppSettings.key == name).first()
+                if row and row.value:
+                    return row.value
+            except Exception:
+                pass
+        return getattr(settings, name, "") or ""
+
+    short_q = query[:80]
+
+    # 1. Google Custom Search API
+    g_key = _key("google_search_api_key")
+    g_cx = _key("google_search_cx")
+    if g_key and g_cx:
+        try:
+            results = await google_search(query, num=num, api_key=g_key, cx=g_cx)
+            if results:
+                logger.info("[search] Google CSE: %d results for '%s'", len(results), short_q)
+                return results
+            logger.debug("[search] Google CSE: 0 results for '%s'", short_q)
+        except Exception as exc:
+            logger.warning("[search] Google CSE failed: %s", exc)
+
+    # 2. DuckDuckGo (no key needed)
+    try:
+        results = await duckduckgo_search(query, num=num)
+        if results:
+            logger.info("[search] DuckDuckGo: %d results for '%s'", len(results), short_q)
+            return results
+        logger.debug("[search] DuckDuckGo: 0 results for '%s'", short_q)
+    except Exception as exc:
+        logger.warning("[search] DuckDuckGo failed: %s", exc)
+
+    # 3. Bing API
+    bing_key = _key("bing_search_api_key")
+    if bing_key:
+        try:
+            results = await bing_search_api(query, bing_key, num=num)
+            if results:
+                logger.info("[search] Bing API: %d results for '%s'", len(results), short_q)
+                return results
+            logger.debug("[search] Bing API: 0 results for '%s'", short_q)
+        except Exception as exc:
+            logger.warning("[search] Bing API failed: %s", exc)
+
+    # 4. Bing HTML scraping
+    try:
+        results = await _bing_search_html(query, num=num)
+        if results:
+            logger.info("[search] Bing HTML: %d results for '%s'", len(results), short_q)
+            return results
+        logger.debug("[search] Bing HTML: 0 results for '%s'", short_q)
+    except Exception as exc:
+        logger.warning("[search] Bing HTML failed: %s", exc)
+
+    logger.warning("[search] all engines returned 0 results for '%s'", short_q)
+    return []
 
 
 # ── Import URLs to DB ─────────────────────────────────────────────────────────

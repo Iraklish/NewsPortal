@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,6 +25,7 @@ _SECRET_KEYS = [
     "polygon_api_key",
     "google_search_api_key",
     "google_search_cx",
+    "bing_search_api_key",
     "news_api_key",
 ]
 
@@ -57,7 +58,7 @@ def _set_db(db: Session, key: str, value: str):
     row = db.query(AppSettings).filter(AppSettings.key == key).first()
     if row:
         row.value = value
-        row.updated_at = datetime.utcnow()
+        row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     else:
         row = AppSettings(key=key, value=value)
         db.add(row)
@@ -162,14 +163,13 @@ async def list_models(
             raise HTTPException(status_code=400, detail="Gemini API key not configured")
         try:
             def _list():
-                import google.generativeai as genai
-                genai.configure(api_key=api_key)
+                from google import genai
+                client = genai.Client(api_key=api_key)
                 names = []
-                for m in genai.list_models():
-                    if "generateContent" in getattr(m, "supported_generation_methods", []):
-                        nm = (m.name or "").replace("models/", "")
-                        if nm:
-                            names.append(nm)
+                for m in client.models.list():
+                    nm = (getattr(m, "name", None) or "").replace("models/", "")
+                    if nm:
+                        names.append(nm)
                 return sorted(set(names))
             models = await asyncio.get_event_loop().run_in_executor(None, _list)
             return {"models": models}

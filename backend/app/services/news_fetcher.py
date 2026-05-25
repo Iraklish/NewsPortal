@@ -1,7 +1,7 @@
 """Pulls articles from RSS feeds and NewsAPI, dedupes, persists."""
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -211,13 +211,41 @@ def _fetch_rss_feed(source: RssSource, db: Session) -> list[int]:
     url = source.url
     category = source.category
 
-    source.last_fetched_at = datetime.utcnow()
+    source.last_fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
         feed = feedparser.parse(url, agent=_USER_AGENT)
     except Exception as exc:
         logger.warning("Failed to parse RSS feed %s: %s", url, exc)
         source.last_status = "error"
         source.last_error = str(exc)[:500]
+        db.commit()
+        return new_ids
+
+    # ── HTTP status check ────────────────────────────────────────────────────
+    http_status = getattr(feed, "status", None)
+    if http_status == 304:
+        # Not Modified — no new content since last conditional GET; totally normal.
+        source.last_status = "ok"
+        source.last_error = None
+        db.commit()
+        return new_ids
+    elif http_status is not None and not (200 <= http_status <= 299):
+        source.last_status = "error"
+        source.last_error = f"HTTP {http_status}"
+        # Permanent client errors — disable to stop wasting fetch cycles.
+        # (5xx are server-side / transient; keep enabled and retry next cycle.)
+        _PERMANENT_ERRORS = {400, 401, 403, 404, 405, 410, 451}
+        if http_status in _PERMANENT_ERRORS:
+            source.enabled = False
+            logger.warning(
+                "[fetcher] source %d disabled (%s): HTTP %d — will not retry",
+                source.id, url[:80], http_status,
+            )
+        else:
+            logger.warning(
+                "[fetcher] source %d error (%s): HTTP %d — keeping enabled for retry",
+                source.id, url[:80], http_status,
+            )
         db.commit()
         return new_ids
 

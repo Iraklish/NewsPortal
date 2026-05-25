@@ -89,15 +89,17 @@ def _call_openai(api_key: str, model: str, system: str, user: str, max_tokens: i
 
 
 def _call_gemini(api_key: str, model: str, system: str, user: str, max_tokens: int) -> str:
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    generation_config = {"max_output_tokens": max_tokens}
-    gemini_model = genai.GenerativeModel(
-        model_name=model,
-        system_instruction=system,
-        generation_config=generation_config,
+    from google import genai
+    from google.genai import types
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=model,
+        contents=user,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+        ),
     )
-    response = gemini_model.generate_content(user)
     return response.text
 
 
@@ -197,27 +199,34 @@ async def call_ai(
 
 def _call_gemini_grounded(api_key: str, model: str, system: str, user: str, max_tokens: int) -> GroundedResponse:
     """Gemini with built-in Google Search grounding."""
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    generation_config = {"max_output_tokens": max_tokens}
+    from google import genai
+    from google.genai import types
+    client = genai.Client(api_key=api_key)
 
-    # The SDK accepts a dict tool spec for the built-in retrieval/search tool.
-    # Try the modern name first, then fall back to the legacy one.
+    # Try the modern typed tool first, then fall back to legacy dict specs.
     last_exc = None
-    for tool_spec in ({"google_search": {}}, {"google_search_retrieval": {}}):
+    response = None
+    for attempt in range(3):
         try:
-            gm = genai.GenerativeModel(
-                model_name=model,
-                system_instruction=system,
-                generation_config=generation_config,
-                tools=[tool_spec],
+            if attempt == 0:
+                tool = types.Tool(google_search=types.GoogleSearch())
+            elif attempt == 1:
+                tool = {"google_search": {}}
+            else:
+                tool = {"google_search_retrieval": {}}
+            response = client.models.generate_content(
+                model=model,
+                contents=user,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    max_output_tokens=max_tokens,
+                    tools=[tool],
+                ),
             )
-            response = gm.generate_content(user)
             break
         except Exception as exc:
             last_exc = exc
             response = None
-            continue
     if response is None:
         raise last_exc or RuntimeError("Gemini grounding tool not accepted")
 

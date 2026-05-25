@@ -272,12 +272,27 @@ export default function SettingsPage() {
           </div>
         </Card>
 
-        {/* Google Search */}
-        <Card title="Google Custom Search">
-          <p className="text-xs text-slate-500 mb-3">Required for the Web Search page. Get keys at console.cloud.google.com and programmablesearchengine.google.com</p>
-          <div className="space-y-3">
-            <KeyRow label="Google API Key" field="google_search_api_key" hasKey={settings?.google_search_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            <KeyRow label="Search Engine CX ID" field="google_search_cx" hasKey={settings?.google_search_cx?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+        {/* Web Search APIs */}
+        <Card title="Web Search APIs">
+          <p className="text-xs text-slate-500 mb-3">
+            Used for the Web Search page and as a fallback when AI grounding returns no results.
+            DuckDuckGo and Bing HTML are tried automatically at no cost — add keys below to unlock
+            higher-quality or higher-volume search.
+          </p>
+          <div className="space-y-4">
+            <div>
+              <p className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mb-2">Google Custom Search</p>
+              <p className="text-[10px] text-slate-600 mb-2">Get keys at console.cloud.google.com and programmablesearchengine.google.com</p>
+              <div className="space-y-3">
+                <KeyRow label="Google API Key" field="google_search_api_key" hasKey={settings?.google_search_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+                <KeyRow label="Search Engine CX ID" field="google_search_cx" hasKey={settings?.google_search_cx?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+              </div>
+            </div>
+            <div className="border-t border-[#1e2433] pt-3">
+              <p className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mb-2">Bing Web Search</p>
+              <p className="text-[10px] text-slate-600 mb-2">Optional — get a free-tier key at portal.azure.com → Bing Search v7. Without a key, Bing HTML scraping is used as a fallback.</p>
+              <KeyRow label="Bing Search API Key" field="bing_search_api_key" hasKey={settings?.bing_search_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+            </div>
           </div>
         </Card>
 

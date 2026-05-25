@@ -116,6 +116,7 @@ class SettingsUpdate(BaseModel):
     polygon_api_key: Optional[str] = None
     google_search_api_key: Optional[str] = None
     google_search_cx: Optional[str] = None
+    bing_search_api_key: Optional[str] = None
     news_api_key: Optional[str] = None
     default_ai_provider: Optional[str] = None
     default_ai_model: Optional[str] = None
@@ -141,6 +142,7 @@ class AppSettingsOut(BaseModel):
     polygon_api_key: KeyStatus
     google_search_api_key: KeyStatus
     google_search_cx: KeyStatus
+    bing_search_api_key: KeyStatus
     news_api_key: KeyStatus
     default_ai_provider: str
     default_ai_model: str
@@ -214,7 +216,8 @@ class DirectedAnalysisRequest(BaseModel):
 
 class DirectedReportRequest(BaseModel):
     focus: str
-    include_web: bool = True
+    include_web: bool = True          # AI-native grounding (Gemini / Anthropic)
+    include_web_search: bool = False  # Explicit multi-engine search (Google/DDG/Bing)
     time_window_hours: int = 24  # default: last 24h. Presets: 24, 48, 168 (1w), 336 (2w), 720 (1m)
     max_web_results: int = 6
     fetch_web_content: bool = False  # if true, downloads full page text for top web results (slow)

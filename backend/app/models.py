@@ -1,6 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, JSON, String, Text
 from .database import Base
+
+
+def _utcnow() -> datetime:
+    """Return current UTC time as a tz-naive datetime (SQLite/SQLAlchemy compatible)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Article(Base):
@@ -13,7 +18,7 @@ class Article(Base):
     source = Column(String(256))
     category = Column(String(128))
     published_at = Column(DateTime, index=True)
-    fetched_at = Column(DateTime, default=datetime.utcnow)
+    fetched_at = Column(DateTime, default=_utcnow)
     content = Column(Text)
     summary = Column(Text)
     author = Column(String(256))
@@ -25,7 +30,7 @@ class Analysis(Base):
     __tablename__ = "analyses"
     id = Column(Integer, primary_key=True, index=True)
     article_id = Column(Integer, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
     focus = Column(String(512))
     model_used = Column(String(128))
     summary = Column(Text)
@@ -49,7 +54,7 @@ class StockAnalysis(Base):
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String(16), nullable=False, index=True)
     company_name = Column(String(256))
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
     price = Column(Float)
     change_pct = Column(Float)
     market_cap = Column(Float)
@@ -75,14 +80,14 @@ class AppSettings(Base):
     id = Column(Integer, primary_key=True)
     key = Column(String(128), unique=True, nullable=False)
     value = Column(Text)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
 class DirectedReport(Base):
     __tablename__ = "directed_reports"
     id = Column(Integer, primary_key=True, index=True)
     focus = Column(String(512), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
     model_used = Column(String(128))
 
     headline = Column(String(512))
@@ -118,7 +123,7 @@ class RssSource(Base):
     category = Column(String(128), nullable=False, index=True)
     name = Column(String(256))
     enabled = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     last_fetched_at = Column(DateTime)
     last_status = Column(String(32))
     last_error = Column(Text)
@@ -128,7 +133,7 @@ class MindMap(Base):
     __tablename__ = "mindmaps"
     id = Column(Integer, primary_key=True, index=True)
     subject = Column(String(512), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
     aspects = Column(JSON, default=list)
     model_used = Column(String(128))
     map_data = Column(JSON, default=dict)

@@ -74,6 +74,7 @@ export interface Analysis {
 export interface DirectedReportRequest {
   focus: string
   include_web?: boolean
+  include_web_search?: boolean
   time_window_hours?: number
   max_web_results?: number
   fetch_web_content?: boolean
@@ -180,6 +181,7 @@ export interface AppSettingsOut {
   polygon_api_key: KeyStatus
   google_search_api_key: KeyStatus
   google_search_cx: KeyStatus
+  bing_search_api_key: KeyStatus
   news_api_key: KeyStatus
   custom_ai_endpoint?: string
   custom_ai_model?: string
@@ -208,6 +210,7 @@ export interface SettingsUpdate {
   polygon_api_key?: string
   google_search_api_key?: string
   google_search_cx?: string
+  bing_search_api_key?: string
   news_api_key?: string
   chat_system_prompt?: string
   ask_system_prompt?: string

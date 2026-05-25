@@ -146,6 +146,7 @@ async def directed_report(
             focus=body.focus,
             db=db,
             include_web=body.include_web,
+            include_web_search=body.include_web_search,
             time_window_hours=body.time_window_hours,
             max_web_results=body.max_web_results,
             fetch_web_content=body.fetch_web_content,

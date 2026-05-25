@@ -32,6 +32,7 @@ const TIME_WINDOWS: { label: string; hours: number }[] = [
 export default function AnalysisPage() {
   const [focus, setFocus] = useState('')
   const [includeWeb, setIncludeWeb] = useState(false)
+  const [includeWebSearch, setIncludeWebSearch] = useState(false)
   const [timeWindowHours, setTimeWindowHours] = useState(24)
 
   const [running, setRunning] = useState(false)
@@ -84,6 +85,7 @@ export default function AnalysisPage() {
       const report = await analysisApi.runDirectedReport({
         focus: focus.trim(),
         include_web: includeWeb,
+        include_web_search: includeWebSearch,
         time_window_hours: timeWindowHours,
       })
       setCurrent(report)
@@ -168,6 +170,12 @@ export default function AnalysisPage() {
             on={includeWeb}
             onChange={setIncludeWeb}
             hint="Lets the model search the live web (Gemini/Anthropic)"
+          />
+          <Option
+            label="Use web search"
+            on={includeWebSearch}
+            onChange={setIncludeWebSearch}
+            hint="Google · DuckDuckGo · Bing results injected as context"
           />
         </div>
 
