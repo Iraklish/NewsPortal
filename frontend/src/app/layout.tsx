@@ -17,7 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={inter.className} style={{ background: '#0a0f1e' }}>
         <ErrorLoggerBoot />
         <Sidebar />
-        <main className="ml-64 min-h-screen p-6">
+        <main className="md:ml-64 min-h-screen p-4 md:p-6 pt-16 md:pt-6">
           {children}
         </main>
       </body>

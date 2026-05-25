@@ -198,8 +198,9 @@ export default function AIChatPanel({
     setMessages(prev => prev.map((m, i) => i === promptIdx ? { ...m, needsWeb: false, declined: true } : m))
   }
 
-  const panelStyle = maximized
-    ? { width: 'calc(100vw - 2rem)', height: 'calc(100vh - 2rem)' }
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+  const panelStyle = maximized || isMobile
+    ? { width: 'calc(100vw - 1rem)', height: 'calc(100vh - 4rem)', bottom: '0.5rem', right: '0.5rem' }
     : { width: size.w, height: size.h }
 
   return (
