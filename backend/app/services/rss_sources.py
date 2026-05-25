@@ -247,7 +247,6 @@ RSS_FEEDS: dict[str, list[str]] = {
     ],
     "world_news": [
         "http://feeds.bbci.co.uk/news/world/rss.xml",
-        "https://feeds.reuters.com/Reuters/worldNews",
         "https://www.aljazeera.com/xml/rss/all.xml",
         "https://www.theguardian.com/world/rss",
         "https://feeds.npr.org/1004/rss.xml",

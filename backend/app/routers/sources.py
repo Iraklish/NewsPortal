@@ -234,11 +234,15 @@ def bulk_fetch_sources(body: BulkIdsIn, db: Session = Depends(get_db)):
 @router.post("/reseed")
 def reseed_sources(db: Session = Depends(get_db)):
     """Add any feeds from RSS_FEEDS that are missing from the DB (won't touch existing rows)."""
+    # Pre-load all existing URLs into a set to avoid N+1 queries and prevent
+    # duplicate inserts when the same URL appears in multiple categories.
+    existing_urls: set[str] = {row.url for row in db.query(RssSource.url).all()}
     added = 0
     for category, urls in RSS_FEEDS.items():
         for url in urls:
-            if not db.query(RssSource).filter(RssSource.url == url).first():
+            if url not in existing_urls:
                 db.add(RssSource(url=url, category=category, enabled=True))
+                existing_urls.add(url)  # prevent double-add within the same batch
                 added += 1
     if added:
         db.commit()

@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -25,9 +26,24 @@ async def search_tickers(q: str = Query(..., min_length=1)):
 def list_stock_analyses(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
+    unique: bool = Query(True, description="Return only the latest analysis per ticker"),
     db: Session = Depends(get_db),
 ):
-    """List all stored stock analyses."""
+    """List stored stock analyses. By default returns the latest analysis per ticker."""
+    if unique:
+        subq = (
+            db.query(func.max(StockAnalysis.id).label("max_id"))
+            .group_by(StockAnalysis.ticker)
+            .subquery()
+        )
+        return (
+            db.query(StockAnalysis)
+            .join(subq, StockAnalysis.id == subq.c.max_id)
+            .order_by(StockAnalysis.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
     return (
         db.query(StockAnalysis)
         .order_by(StockAnalysis.created_at.desc())

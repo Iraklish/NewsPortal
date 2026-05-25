@@ -20,8 +20,8 @@ export default function DirectedSummaryCard({
 }) {
   if (!analyses.length) return null
   const impact = dominantImpact(analyses)
-  const sectors = [...new Set(analyses.flatMap(a => a.affected_sectors || []))]
-  const regions = [...new Set(analyses.flatMap(a => a.affected_regions || []))]
+  const sectors = Array.from(new Set(analyses.flatMap(a => a.affected_sectors || [])))
+  const regions = Array.from(new Set(analyses.flatMap(a => a.affected_regions || [])))
   const avgConf =
     analyses.reduce((s, a) => s + (a.confidence_score || 0), 0) / analyses.length
 
@@ -73,7 +73,7 @@ export default function DirectedSummaryCard({
                   {cat}
                 </p>
                 <div className="flex flex-wrap gap-1">
-                  {[...items].slice(0, 4).map(item => (
+                  {Array.from(items).slice(0, 4).map(item => (
                     <span
                       key={item}
                       className="text-xs px-1.5 py-0.5 rounded bg-[#1e2433] text-slate-300"

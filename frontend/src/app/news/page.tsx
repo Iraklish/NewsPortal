@@ -17,6 +17,20 @@ import {
 import clsx from 'clsx'
 import AddArticleModal from '@/components/AddArticleModal'
 
+/** Strip HTML tags and decode common entities for safe plain-text display. */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, ' ')           // remove tags
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s{2,}/g, ' ')            // collapse whitespace
+    .trim()
+}
+
 const ASPECT_PRESETS = [
   'Summary',
   'Detailed summary',
@@ -265,7 +279,7 @@ function ArticleCard({ article, onClick }: { article: Article; onClick: () => vo
         </div>
         <h3 className="text-sm font-semibold text-white leading-snug line-clamp-2 mb-1">{article.title}</h3>
         {article.summary && (
-          <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{article.summary}</p>
+          <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{stripHtml(article.summary)}</p>
         )}
         <p className="text-[10px] text-slate-600 mt-1.5">{fmtDate(article.published_at)}</p>
       </div>
@@ -415,7 +429,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
           {(article.summary || article.content) && (
             <div className="bg-[#0a0f1e] rounded-lg p-4 border border-[#1e2433]">
               <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
-                {article.summary || article.content?.slice(0, 1500)}
+                {stripHtml(article.summary || article.content?.slice(0, 1500) || '')}
                 {article.content && article.content.length > 1500 && '…'}
               </p>
             </div>
