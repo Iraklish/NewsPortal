@@ -17,6 +17,10 @@ function fmt(s?: string): string {
 
 
 const TIME_WINDOWS: { label: string; hours: number }[] = [
+  { label: 'Last 1 hour', hours: 1 },
+  { label: 'Last 2 hours', hours: 2 },
+  { label: 'Last 6 hours', hours: 6 },
+  { label: 'Last 12 hours', hours: 12 },
   { label: 'Last 24 hours', hours: 24 },
   { label: 'Last 2 days', hours: 48 },
   { label: 'Last 3 days', hours: 72 },

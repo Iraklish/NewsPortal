@@ -1,6 +1,6 @@
 'use client'
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { X, Send, Maximize2, Minimize2, GripVertical, Globe, ExternalLink, Loader2 } from 'lucide-react'
+import { X, Send, Maximize2, Minimize2, Minus, GripVertical, Globe, ExternalLink, Loader2 } from 'lucide-react'
 import { analysisApi, type DirectedReportRef } from '@/lib/api'
 import clsx from 'clsx'
 import MessageContent from './MessageContent'
@@ -58,6 +58,7 @@ export default function AIChatPanel({
   const [loading, setLoading] = useState(false)
   const [size, setSize] = useState<Size>({ w: 420, h: 600 })
   const [maximized, setMaximized] = useState(false)
+  const [minimized, setMinimized] = useState(false)
   const [resizing, setResizing] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const firstMsg = useRef(false)
@@ -199,9 +200,11 @@ export default function AIChatPanel({
   }
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
-  const panelStyle = maximized || isMobile
-    ? { width: 'calc(100vw - 1rem)', height: 'calc(100vh - 4rem)', bottom: '0.5rem', right: '0.5rem' }
-    : { width: size.w, height: size.h }
+  const panelStyle = minimized
+    ? { width: isMobile ? 'calc(100vw - 1rem)' : size.w, height: 'auto' }
+    : maximized || isMobile
+      ? { width: 'calc(100vw - 1rem)', height: 'calc(100vh - 4rem)', bottom: '0.5rem', right: '0.5rem' }
+      : { width: size.w, height: size.h }
 
   return (
     <div
@@ -224,11 +227,27 @@ export default function AIChatPanel({
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#2d3148] shrink-0">
-        <span className="font-semibold text-sm text-white">AI Chat</span>
-        <div className="flex gap-1">
+      <div
+        className="flex items-center justify-between px-4 py-3 border-b border-[#2d3148] shrink-0 cursor-pointer select-none"
+        onClick={() => setMinimized(v => !v)}
+        title={minimized ? 'Restore chat' : 'Minimize chat'}
+      >
+        <span className="font-semibold text-sm text-white flex items-center gap-2">
+          AI Chat
+          {minimized && messages.length > 0 && (
+            <span className="text-[10px] text-slate-500 font-normal">{messages.length} message{messages.length !== 1 ? 's' : ''}</span>
+          )}
+        </span>
+        <div className="flex gap-1" onClick={e => e.stopPropagation()}>
           <button
-            onClick={toggleMaximize}
+            onClick={() => setMinimized(v => !v)}
+            title={minimized ? 'Restore' : 'Minimize'}
+            className="p-1.5 hover:bg-white/10 rounded text-slate-400 hover:text-white transition-colors"
+          >
+            <Minus size={14} />
+          </button>
+          <button
+            onClick={() => { setMinimized(false); toggleMaximize() }}
             title={maximized ? 'Restore' : 'Maximize'}
             className="p-1.5 hover:bg-white/10 rounded text-slate-400 hover:text-white transition-colors"
           >
@@ -245,7 +264,7 @@ export default function AIChatPanel({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
+      <div className={clsx('flex-1 overflow-y-auto p-4 space-y-3 min-h-0', minimized && 'hidden')}>
         {messages.length === 0 && (
           <p className="text-slate-500 text-sm text-center mt-8">
             Ask anything about the current news analysis. Markdown and basic HTML are rendered.
@@ -373,7 +392,7 @@ export default function AIChatPanel({
       </div>
 
       {/* Input */}
-      <div className="p-3 border-t border-[#2d3148] flex gap-2 shrink-0 items-end">
+      <div className={clsx('p-3 border-t border-[#2d3148] flex gap-2 shrink-0 items-end', minimized && 'hidden')}>
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
