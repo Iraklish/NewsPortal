@@ -249,7 +249,28 @@ export interface MindMapOut {
 
 // ─── Articles ─────────────────────────────────────────────────────────────────
 
+export interface ArticleIn {
+  title?: string
+  content: string
+  url?: string
+  category?: string       // defaults to "post" on the server
+  source?: string
+  author?: string
+  summary?: string
+  published_at?: string
+  is_html?: boolean
+}
+
 export const articlesApi = {
+  /** Create an article manually. Category defaults to "post" when omitted. */
+  create(body: ArticleIn) {
+    return request<Article>('/articles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
   list(params?: { skip?: number; limit?: number; category?: string; q?: string }) {
     const qp = new URLSearchParams()
     if (params?.skip !== undefined) qp.set('skip', String(params.skip))

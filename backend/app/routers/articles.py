@@ -255,6 +255,44 @@ def delete_article(article_id: int, db: Session = Depends(get_db)):
     return {"deleted": True, "id": article_id}
 
 
+# ── POST /articles  (primary create endpoint) ────────────────────────────────
+
+class ArticleIn(BaseModel):
+    title: Optional[str] = None
+    content: str
+    url: Optional[str] = None          # canonical URL for dedup; synthesised if omitted
+    category: str = "post"             # defaults to "post"; any string is accepted
+    source: Optional[str] = None
+    author: Optional[str] = None
+    summary: Optional[str] = None
+    published_at: Optional[datetime] = None
+    is_html: bool = False              # set True to strip HTML tags from content
+
+
+@router.post("", response_model=ArticleOut, status_code=201)
+def create_article(body: ArticleIn, db: Session = Depends(get_db)):
+    """Create an article manually.
+
+    Sends the payload through the standard 3-layer dedup check (URL hash →
+    title hash → fuzzy title match) and stores the result.  The default
+    category is ``post``; supply any other string to override.
+    """
+    content = _strip_html(body.content) if body.is_html else body.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="content must not be empty")
+    return _insert_article(
+        db,
+        title=body.title,
+        content=content,
+        summary=body.summary,
+        source=body.source,
+        category=body.category or "post",
+        url=body.url,
+        author=body.author,
+        published_at=body.published_at,
+    )
+
+
 # ── Manual add ───────────────────────────────────────────────────────────────
 
 class ManualArticleIn(BaseModel):
