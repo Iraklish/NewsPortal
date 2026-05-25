@@ -34,6 +34,7 @@ _NON_SECRET_KEYS = [
     "custom_ai_endpoint",
     "custom_ai_model",
     "auto_analyze_enabled",
+    "fetch_interval_minutes",
 ]
 
 
@@ -87,6 +88,15 @@ def get_settings(db: Session = Depends(get_db)):
     else:
         auto_analyze = bool(settings.auto_analyze_enabled)
 
+    interval_override = _db_get(db, "fetch_interval_minutes")
+    if interval_override:
+        try:
+            fetch_interval = max(1, int(interval_override))
+        except (ValueError, TypeError):
+            fetch_interval = max(1, int(settings.fetch_interval_minutes))
+    else:
+        fetch_interval = max(1, int(settings.fetch_interval_minutes))
+
     return AppSettingsOut(
         **key_statuses,
         default_ai_provider=default_provider,
@@ -100,6 +110,7 @@ def get_settings(db: Session = Depends(get_db)):
         chat_system_prompt_customized=bool(chat_override.strip()),
         ask_system_prompt_customized=bool(ask_override.strip()),
         auto_analyze_enabled=auto_analyze,
+        fetch_interval_minutes=fetch_interval,
     )
 
 
@@ -222,14 +233,28 @@ def reset_setting(key: str, db: Session = Depends(get_db)):
 
 @router.put("")
 def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
+    from ..services.scheduler import reschedule_fetch
+
     updated_keys = []
     update_dict = body.model_dump(exclude_none=True)
 
     _no_strip = {"chat_system_prompt", "ask_system_prompt"}
     _bool_keys = {"auto_analyze_enabled"}
+    _int_keys = {"fetch_interval_minutes"}
+
+    new_interval: int | None = None
 
     for key, value in update_dict.items():
         if value is None:
+            continue
+
+        # Integers: clamp then store as string
+        if key in _int_keys:
+            val_int = max(1, int(value))
+            _set_db(db, key, str(val_int))
+            updated_keys.append(key)
+            if key == "fetch_interval_minutes":
+                new_interval = val_int
             continue
 
         # Booleans always save (true → "1", false → "0")
@@ -253,5 +278,12 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
 
     if updated_keys:
         db.commit()
+
+    # Apply live reschedule after commit so the DB value is durable first
+    if new_interval is not None:
+        try:
+            reschedule_fetch(new_interval)
+        except Exception as exc:
+            logger.warning("[settings] reschedule_fetch(%d) failed: %s", new_interval, exc)
 
     return {"updated": updated_keys, "count": len(updated_keys)}

@@ -122,6 +122,7 @@ class SettingsUpdate(BaseModel):
     chat_system_prompt: Optional[str] = None
     ask_system_prompt: Optional[str] = None
     auto_analyze_enabled: Optional[bool] = None
+    fetch_interval_minutes: Optional[int] = None
 
 
 class KeyStatus(BaseModel):
@@ -152,6 +153,7 @@ class AppSettingsOut(BaseModel):
     chat_system_prompt_customized: bool
     ask_system_prompt_customized: bool
     auto_analyze_enabled: bool
+    fetch_interval_minutes: int
 
 
 # ── MindMap ───────────────────────────────────────────────────────────────────

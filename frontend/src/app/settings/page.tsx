@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { settingsApi, sourcesApi, type AppSettingsOut, type SettingsUpdate, type RssSource } from '@/lib/api'
-import { CheckCircle, AlertCircle, Eye, EyeOff, Save, RefreshCw, Trash2, Plus, Loader2, Rss, Cpu, MessageSquare, Database, Newspaper, RotateCcw, Search, ChevronDown, ChevronRight, Edit2, X, Check, Upload, Tag, Power, Square, CheckSquare } from 'lucide-react'
+import { CheckCircle, AlertCircle, Eye, EyeOff, Save, RefreshCw, Trash2, Plus, Loader2, Rss, Cpu, MessageSquare, Database, Newspaper, RotateCcw, Search, ChevronDown, ChevronRight, Edit2, X, Check, Upload, Tag, Power, Square, CheckSquare, Clock } from 'lucide-react'
 
 const AI_PROVIDERS = [
   { value: 'anthropic', label: 'Anthropic (Claude)' },
@@ -31,6 +31,7 @@ export default function SettingsPage() {
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelsError, setModelsError] = useState('')
+  const [nextFetchAt, setNextFetchAt] = useState<string | null>(null)
 
   useEffect(() => {
     settingsApi.get().then(s => {
@@ -40,8 +41,10 @@ export default function SettingsPage() {
         default_ai_model: s.default_ai_model,
         chat_system_prompt: s.chat_system_prompt_customized ? s.chat_system_prompt : '',
         ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '',
+        fetch_interval_minutes: s.fetch_interval_minutes,
       })
     }).catch(() => {}).finally(() => setLoading(false))
+    sourcesApi.status().then(s => setNextFetchAt(s.next_fetch_at ?? null)).catch(() => {})
   }, [])
 
   async function resetKey(key: string) {
@@ -56,7 +59,7 @@ export default function SettingsPage() {
     }
   }
 
-  function set(key: keyof SettingsUpdate, value: string | boolean) {
+  function set(key: keyof SettingsUpdate, value: string | boolean | number) {
     setForm(prev => ({ ...prev, [key]: value }))
   }
 
@@ -269,12 +272,45 @@ export default function SettingsPage() {
         <Section icon={Newspaper} label="News Sources" description="Manage RSS feeds the scheduler polls hourly" />
 
         <Card title="Automation">
-          <Toggle
-            on={(form.auto_analyze_enabled ?? settings?.auto_analyze_enabled) ?? true}
-            onChange={v => set('auto_analyze_enabled', v)}
-            label="Auto-analyze new articles"
-            hint='When enabled, every article pulled by the hourly fetch (or "Fetch Now") is sent through the AI for analysis (capped to prevent runaway token usage). Turn off to fetch news only — you can still analyze articles manually from the News page or run directed reports.'
-          />
+          <div className="space-y-5">
+            <Toggle
+              on={(form.auto_analyze_enabled ?? settings?.auto_analyze_enabled) ?? true}
+              onChange={v => set('auto_analyze_enabled', v)}
+              label="Auto-analyze new articles"
+              hint='When enabled, every article pulled by the scheduled fetch is sent through the AI for analysis (capped to prevent runaway token usage). Turn off to fetch news only — you can still analyze articles manually.'
+            />
+
+            <div className="border-t border-[#1e2433] pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Clock size={13} className="text-indigo-400" />
+                <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Fetch Schedule</p>
+              </div>
+              <div className="flex items-end gap-4 flex-wrap">
+                <Field label="Fetch interval (minutes)">
+                  <input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={form.fetch_interval_minutes ?? settings?.fetch_interval_minutes ?? 30}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10)
+                      if (!isNaN(v)) set('fetch_interval_minutes', Math.max(1, Math.min(1440, v)))
+                    }}
+                    className="input w-32"
+                  />
+                </Field>
+                {nextFetchAt && (
+                  <div className="pb-1.5">
+                    <p className="text-[10px] text-slate-500 mb-0.5">Next scheduled fetch</p>
+                    <p className="text-xs text-indigo-300 font-mono">{new Date(nextFetchAt).toLocaleTimeString()}</p>
+                  </div>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-600 mt-2">
+                Changes take effect immediately — no server restart required. Min 1 min, max 1440 min (24 h).
+              </p>
+            </div>
+          </div>
         </Card>
 
         <Card title="RSS Feeds">
@@ -285,7 +321,7 @@ export default function SettingsPage() {
   )
 }
 
-function Section({ icon: Icon, label, description }: { icon: React.ComponentType<{ size?: number }>; label: string; description?: string }) {
+function Section({ icon: Icon, label, description }: { icon: React.ComponentType<{ size?: number | string }>; label: string; description?: string }) {
   return (
     <div className="flex items-center gap-3 pt-3 pb-1 border-b border-[#1e2433]">
       <div className="w-9 h-9 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
@@ -333,7 +369,7 @@ function PromptField({
   hint: string
   fieldKey: 'chat_system_prompt' | 'ask_system_prompt'
   form: SettingsUpdate
-  set: (k: keyof SettingsUpdate, v: string | boolean) => void
+  set: (k: keyof SettingsUpdate, v: string | boolean | number) => void
   defaultValue: string
   customized: boolean
   onReset: () => void
@@ -458,7 +494,7 @@ function SourcesManager() {
   }
 
   async function bulkDeleteSelected() {
-    const ids = [...selected]
+    const ids = Array.from(selected)
     if (!ids.length) return
     if (!confirm(`Delete ${ids.length} selected feed${ids.length === 1 ? '' : 's'}?\nThis cannot be undone.`)) return
     setBusy(true)
@@ -472,7 +508,7 @@ function SourcesManager() {
   }
 
   async function bulkFetchSelected() {
-    const ids = [...selected]
+    const ids = Array.from(selected)
     if (!ids.length) return
     setBusy(true)
     flash(`Fetching ${ids.length} feed${ids.length === 1 ? '' : 's'}…`)
@@ -1096,7 +1132,7 @@ function KeyRow({
   field: keyof SettingsUpdate
   hasKey?: boolean
   form: SettingsUpdate
-  set: (k: keyof SettingsUpdate, v: string | boolean) => void
+  set: (k: keyof SettingsUpdate, v: string | boolean | number) => void
   showKeys: Record<string, boolean>
   toggleShow: (k: string) => void
 }) {

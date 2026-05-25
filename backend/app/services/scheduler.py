@@ -135,6 +135,30 @@ def stop_scheduler():
         logger.info("[scheduler] stopped")
 
 
+def reschedule_fetch(minutes: int):
+    """Update the fetch interval live without restarting the server."""
+    global _scheduler
+    minutes = max(1, int(minutes))
+    if _scheduler is None:
+        logger.warning("[scheduler] reschedule_fetch called but scheduler is not running")
+        return
+    _scheduler.reschedule_job(
+        "fetch_and_analyze",
+        trigger=IntervalTrigger(minutes=minutes),
+    )
+    _scheduler.modify_job("fetch_and_analyze", name=f"News fetch every {minutes} min + auto-analyze")
+    logger.info("[scheduler] fetch interval updated to %d min", minutes)
+
+
+def get_next_run_time() -> datetime | None:
+    """Return the next scheduled run time for the fetch job, or None."""
+    global _scheduler
+    if _scheduler is None:
+        return None
+    job = _scheduler.get_job("fetch_and_analyze")
+    return job.next_run_time if job else None
+
+
 async def run_fetch_now() -> list[int]:
     """Manual trigger used by the API endpoint."""
     db = SessionLocal()

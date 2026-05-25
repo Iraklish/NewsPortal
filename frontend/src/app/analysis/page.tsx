@@ -450,7 +450,7 @@ function Block({ title, accent, children }: { title: string; accent?: string; ch
   )
 }
 
-function ImpactBlock({ icon: Icon, title, text, accent }: { icon: React.ComponentType<{ size?: number; className?: string }>; title: string; text: string; accent?: string }) {
+function ImpactBlock({ icon: Icon, title, text, accent }: { icon: React.ComponentType<{ size?: number | string; className?: string }>; title: string; text: string; accent?: string }) {
   return (
     <div className="bg-[#0a0f1e] rounded-lg p-4 border border-[#1e2433]">
       <h3 className={clsx('text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-1.5', accent || 'text-slate-400')}>

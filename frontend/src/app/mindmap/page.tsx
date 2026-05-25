@@ -530,7 +530,7 @@ function TreeRow({
 }: {
   label: string
   badge?: string
-  icon?: React.ComponentType<{ size?: number; className?: string }>
+  icon?: React.ComponentType<{ size?: number | string; className?: string }>
   accent?: string
   bold?: boolean
   focused?: boolean
@@ -835,7 +835,7 @@ function Section({ title, body, accent }: { title: string; body: string; accent?
 
 function CollapsibleCard({ title, icon: Icon, open, onToggle, children }: {
   title: string
-  icon?: React.ComponentType<{ size?: number; className?: string }>
+  icon?: React.ComponentType<{ size?: number | string; className?: string }>
   open: boolean
   onToggle: () => void
   children: React.ReactNode

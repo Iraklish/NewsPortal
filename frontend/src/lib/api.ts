@@ -190,6 +190,7 @@ export interface AppSettingsOut {
   chat_system_prompt_customized: boolean
   ask_system_prompt_customized: boolean
   auto_analyze_enabled: boolean
+  fetch_interval_minutes: number
 }
 
 export interface SettingsUpdate {
@@ -211,6 +212,7 @@ export interface SettingsUpdate {
   chat_system_prompt?: string
   ask_system_prompt?: string
   auto_analyze_enabled?: boolean
+  fetch_interval_minutes?: number
 }
 
 export interface MindMapNode {
