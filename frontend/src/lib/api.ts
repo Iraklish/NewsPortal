@@ -724,6 +724,7 @@ export interface WebSearchResponse {
   results: WebSearchResult[]
   total: number
   engines: { duckduckgo: number; bing: number; google: number; yahoo: number; startpage: number }
+  per_engine?: { duckduckgo: WebSearchResult[]; bing: WebSearchResult[]; google: WebSearchResult[]; yahoo: WebSearchResult[]; startpage: WebSearchResult[] }
   error?: string
 }
 

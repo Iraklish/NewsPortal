@@ -41,11 +41,12 @@ export default function SearchPage() {
   const [query, setQuery]         = useState('')
   const [num, setNum]             = useState(100)
   const [loading, setLoading]     = useState(false)
-  const [results, setResults]     = useState<WebSearchResult[]>([])
-  const [engines, setEngines]     = useState<Engines | null>(null)
-  const [error, setError]         = useState('')
-  const [filter, setFilter]       = useState<Filter>('all')
-  const [importing, setImporting] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({})
+  const [results, setResults]       = useState<WebSearchResult[]>([])
+  const [perEngine, setPerEngine]   = useState<Record<string, WebSearchResult[]>>({})
+  const [engines, setEngines]       = useState<Engines | null>(null)
+  const [error, setError]           = useState('')
+  const [filter, setFilter]         = useState<Filter>('all')
+  const [importing, setImporting]   = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({})
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { inputRef.current?.focus() }, [])
@@ -57,6 +58,7 @@ export default function SearchPage() {
     setLoading(true)
     setError('')
     setResults([])
+    setPerEngine({})
     setEngines(null)
     setFilter('all')
     setImporting({})
@@ -65,6 +67,7 @@ export default function SearchPage() {
       if (data.error) setError(data.error)
       setResults(data.results)
       setEngines(data.engines as Engines)
+      setPerEngine(data.per_engine ?? {})
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -83,9 +86,12 @@ export default function SearchPage() {
     }
   }
 
+  // When a specific engine tab is active, show that engine's raw results
+  // (before cross-engine dedup) so results are never empty just because
+  // the same URL was already found by a higher-priority engine.
   const filtered = filter === 'all'
     ? results
-    : results.filter(r => (r.engine === 'google_cse' ? 'google' : r.engine) === filter)
+    : (perEngine[filter] ?? results.filter(r => (r.engine === 'google_cse' ? 'google' : r.engine) === filter))
 
   function engineCount(f: Filter): number {
     if (!engines) return 0

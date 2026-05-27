@@ -889,6 +889,17 @@ async def full_web_search(query: str, num: int = 100) -> dict:
             "yahoo": len(yahoo_r),
             "startpage": len(sp_r),
         },
+        # Raw per-engine results (before cross-engine deduplication).
+        # The frontend uses these for engine-specific filter tabs so that
+        # results aren't missing just because the same URL was found first
+        # by a higher-priority engine in the merged list.
+        "per_engine": {
+            "duckduckgo": ddg_r,
+            "bing": bing_r,
+            "google": goog_r,
+            "yahoo": yahoo_r,
+            "startpage": sp_r,
+        },
     }
 
 
