@@ -1,4 +1,5 @@
 'use client'
+import { useEffect, useRef, useState } from 'react'
 import {
   AreaChart,
   Area,
@@ -7,8 +8,9 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import type { StockAnalysis } from '@/lib/api'
+import { stocksApi, type StockAnalysis } from '@/lib/api'
 import ImpactBadge from './ImpactBadge'
+import { MessageCircle, Send, Sparkles, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 
 function formatLargeNum(n: number | undefined): string {
   if (n === undefined || n === null) return '—'
@@ -38,6 +40,7 @@ function MetricItem({ label, value }: { label: string; value: React.ReactNode })
 }
 
 export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
+  const [chatOpen, setChatOpen] = useState(false)
   const isPositive = (analysis.change_pct ?? 0) >= 0
   const chartColor = isPositive ? '#10b981' : '#ef4444'
   const chartData = (analysis.price_history ?? []).slice(-30).map(p => ({
@@ -235,6 +238,105 @@ export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
           )}
         </div>
       )}
+
+      {/* Follow-up chat */}
+      <div className="pt-4 border-t border-[#1e2433]">
+        <button
+          onClick={() => setChatOpen(v => !v)}
+          className="flex items-center gap-2 text-xs text-slate-400 hover:text-white transition-colors"
+        >
+          <MessageCircle size={13} className="text-indigo-400" />
+          Follow-up questions
+          {chatOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
+        {chatOpen && <StockChat ticker={analysis.ticker} />}
+      </div>
+    </div>
+  )
+}
+
+// ── Inline follow-up chat ─────────────────────────────────────────────────────
+
+type ChatMsg = { role: 'user' | 'assistant'; content: string }
+
+function StockChat({ ticker }: { ticker: string }) {
+  const [messages, setMessages] = useState<ChatMsg[]>([])
+  const [input, setInput] = useState('')
+  const [asking, setAsking] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  async function send() {
+    const q = input.trim()
+    if (!q || asking) return
+    const newMsg: ChatMsg = { role: 'user', content: q }
+    const updated = [...messages, newMsg]
+    setMessages(updated)
+    setInput('')
+    setAsking(true)
+    try {
+      const res = await stocksApi.ask(ticker, q, updated.slice(-12))
+      setMessages(prev => [...prev, { role: 'assistant', content: res.response }])
+    } catch (e: unknown) {
+      setMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${e instanceof Error ? e.message : String(e)}` }])
+    } finally {
+      setAsking(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 bg-[#0a0f1e] rounded-lg border border-[#1e2433] overflow-hidden">
+      {messages.length > 0 && (
+        <div className="max-h-72 overflow-y-auto p-3 space-y-3">
+          {messages.map((m, i) => (
+            <div key={i} className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {m.role === 'assistant' && (
+                <div className="w-5 h-5 rounded-full bg-indigo-600/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Sparkles size={10} className="text-indigo-400" />
+                </div>
+              )}
+              <div className={`max-w-[85%] rounded-lg px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
+                m.role === 'user'
+                  ? 'bg-indigo-600/20 text-indigo-100 border border-indigo-500/20'
+                  : 'bg-[#0d1117] text-slate-200 border border-[#1e2433]'
+              }`}>
+                {m.content}
+              </div>
+            </div>
+          ))}
+          {asking && (
+            <div className="flex gap-2">
+              <div className="w-5 h-5 rounded-full bg-indigo-600/30 flex items-center justify-center flex-shrink-0">
+                <Loader2 size={10} className="text-indigo-400 animate-spin" />
+              </div>
+              <div className="bg-[#0d1117] border border-[#1e2433] rounded-lg px-3 py-2 text-xs text-slate-500">
+                Thinking…
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+      )}
+      <div className="flex items-center gap-2 p-2 border-t border-[#1e2433]">
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+          placeholder={`Ask a follow-up question about ${ticker}…`}
+          className="flex-1 bg-transparent text-xs text-white placeholder-slate-600 focus:outline-none px-2 py-1.5"
+          disabled={asking}
+        />
+        <button
+          onClick={send}
+          disabled={asking || !input.trim()}
+          className="p-1.5 text-indigo-400 hover:text-indigo-300 disabled:opacity-30 transition-colors"
+        >
+          {asking ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+        </button>
+      </div>
     </div>
   )
 }

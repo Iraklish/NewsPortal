@@ -688,6 +688,14 @@ export const stocksApi = {
   getLatest(ticker: string) {
     return request<StockAnalysis>(`/stocks/${encodeURIComponent(ticker)}/latest`)
   },
+
+  ask(ticker: string, question: string, history: Array<{ role: string; content: string }>) {
+    return request<{ response: string }>(`/stocks/${encodeURIComponent(ticker)}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, history }),
+    })
+  },
 }
 
 // ─── Logs ────────────────────────────────────────────────────────────────────

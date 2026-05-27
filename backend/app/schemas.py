@@ -106,6 +106,11 @@ class ReportAskRequest(BaseModel):
     history: List[ChatMessageIn] = []
 
 
+class StockAskRequest(BaseModel):
+    question: str
+    history: List[ChatMessageIn] = []
+
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 class SettingsUpdate(BaseModel):
