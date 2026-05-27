@@ -12,7 +12,7 @@ import ImpactBadge from '@/components/ImpactBadge'
 import MessageContent from '@/components/MessageContent'
 import {
   RefreshCw, Search, X, ExternalLink, Loader2, Sparkles,
-  Send, ChevronDown, Clock, Plus, BookOpen,
+  Send, ChevronDown, Clock, Plus, BookOpen, Globe,
 } from 'lucide-react'
 import clsx from 'clsx'
 import AddArticleModal from '@/components/AddArticleModal'
@@ -43,6 +43,18 @@ const ASPECT_PRESETS = [
   'Technology angle',
   'Energy & commodities',
 ]
+
+const LANGUAGES = ['English', 'Hebrew', 'Russian', 'Georgian', 'French', 'German'] as const
+type Lang = typeof LANGUAGES[number]
+
+const LANG_INSTRUCTION: Record<Lang, string> = {
+  English:  '',
+  Hebrew:   ' — Respond entirely in Hebrew (עברית).',
+  Russian:  ' — Respond entirely in Russian (Русский).',
+  Georgian: ' — Respond entirely in Georgian (ქართული).',
+  French:   ' — Respond entirely in French (Français).',
+  German:   ' — Respond entirely in German (Deutsch).',
+}
 
 function fmtDate(s?: string): string {
   if (!s) return ''
@@ -302,6 +314,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [language, setLanguage] = useState<Lang>('English')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // Load existing analyses for this article into the timeline.
@@ -333,8 +346,12 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
   }
 
   async function send(mode: 'ask' | 'analyze' | 'summarize') {
-    const SUMMARIZE_PROMPT = 'Please provide a concise summary of this article. Cover: the main topic, key facts or figures, who is involved, why it matters, and any immediate implications.'
-    const text = mode === 'summarize' ? SUMMARIZE_PROMPT : input.trim()
+    const langSuffix = LANG_INSTRUCTION[language]
+    const SUMMARIZE_PROMPT =
+      'Please provide a concise summary of this article. Cover: the main topic, key facts or figures, who is involved, why it matters, and any immediate implications.' + langSuffix
+    const rawText = mode === 'summarize' ? SUMMARIZE_PROMPT : input.trim()
+    // For ask/analyze, append language instruction to the effective prompt but keep the display label clean
+    const text = (mode !== 'summarize' && langSuffix) ? rawText + langSuffix : rawText
     if (!text || busy) return
     setBusy(true)
     setError('')
@@ -344,10 +361,10 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
     if (mode === 'summarize') {
       setTimeline(prev => [...prev, { kind: 'pending-summarize', id: pendingId, at: now }])
     } else {
-      const userItem: TimelineItem = { kind: 'user', id: `u-${now}`, at: now, content: text }
+      const userItem: TimelineItem = { kind: 'user', id: `u-${now}`, at: now, content: rawText }
       const pending: TimelineItem = mode === 'ask'
         ? { kind: 'pending-chat', id: pendingId, at: now + 1 }
-        : { kind: 'pending-analyze', id: pendingId, at: now + 1, focus: text }
+        : { kind: 'pending-analyze', id: pendingId, at: now + 1, focus: rawText }
       setTimeline(prev => [...prev, userItem, pending])
       setInput('')
     }
@@ -486,9 +503,35 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
           </div>
         </div>
 
-        {/* Composer — unified input + two send buttons */}
-        <div className="border-t border-[#1e2433] p-4 bg-[#0a0f1e]">
-          <div className="flex flex-wrap gap-1.5 mb-2">
+        {/* Composer */}
+        <div className="border-t border-[#1e2433] p-4 bg-[#0a0f1e] space-y-2.5">
+
+          {/* Row 1 — Summarize (prominent) + Language */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => send('summarize')}
+              disabled={busy}
+              title="One-click article summary"
+              className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded-lg text-sm text-white font-semibold transition-colors"
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <BookOpen size={14} />}
+              Summarize
+            </button>
+            <div className="flex-1" />
+            <Globe size={13} className="text-slate-500 flex-shrink-0" />
+            <select
+              value={language}
+              onChange={e => setLanguage(e.target.value as Lang)}
+              className="bg-[#0d1117] border border-[#1e2433] hover:border-indigo-500/40 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
+            >
+              {LANGUAGES.map(l => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Row 2 — Aspect preset chips */}
+          <div className="flex flex-wrap gap-1.5">
             {ASPECT_PRESETS.map(p => (
               <button
                 key={p}
@@ -500,19 +543,15 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
               </button>
             ))}
           </div>
+
+          {/* Row 3 — Textarea + Ask + Analyze */}
           <div className="flex gap-2">
             <textarea
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  send('ask')
-                }
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault()
-                  send('analyze')
-                }
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send('ask') }
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send('analyze') }
               }}
               rows={1}
               placeholder="Ask a question or describe a focus aspect…"
@@ -520,19 +559,10 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
               style={{ minHeight: 38 }}
             />
             <button
-              onClick={() => send('summarize')}
-              disabled={busy}
-              title="Summarize — one-click article summary"
-              className="flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded-lg text-sm text-white font-medium"
-            >
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <BookOpen size={14} />}
-              Summarize
-            </button>
-            <button
               onClick={() => send('ask')}
               disabled={busy || !input.trim()}
               title="Ask (Enter) — quick chat answer"
-              className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium"
+              className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium transition-colors"
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
               Ask
@@ -541,16 +571,20 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
               onClick={() => send('analyze')}
               disabled={busy || !input.trim()}
               title="Analyze (⌘/Ctrl+Enter) — save a structured analysis"
-              className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium"
+              className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium transition-colors"
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
               Analyze
             </button>
           </div>
-          <p className="text-[10px] text-slate-600 mt-1.5">
-            <span className="text-emerald-400">Summarize</span> = one-click summary · <span className="text-amber-400">Ask</span> = chat answer · <span className="text-indigo-400">Analyze</span> = saved structured report · Enter = Ask · ⌘/Ctrl+Enter = Analyze
+
+          <p className="text-[10px] text-slate-600">
+            <span className="text-emerald-400">Summarize</span> = one-click summary ·{' '}
+            <span className="text-amber-400">Ask</span> = chat answer ·{' '}
+            <span className="text-indigo-400">Analyze</span> = saved structured report ·{' '}
+            Enter = Ask · ⌘/Ctrl+Enter = Analyze
           </p>
-          {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+          {error && <p className="text-xs text-red-400">{error}</p>}
         </div>
       </div>
     </div>
