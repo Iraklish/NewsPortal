@@ -258,34 +258,51 @@ async def google_search(query: str, date_restrict: str = None, num: int = 10,
     return results
 
 
-# ── DuckDuckGo (via duckduckgo_search library) ────────────────────────────────
+# ── DuckDuckGo (AsyncDDGS — native async, primp TLS impersonation) ────────────
 
-async def duckduckgo_search(query: str, num: int = 30) -> list[dict]:
-    """DuckDuckGo search via the duckduckgo_search library.
+async def duckduckgo_search(query: str, num: int = 50) -> list[dict]:
+    """DuckDuckGo via AsyncDDGS (async-native, browser TLS impersonation via primp)."""
+    results: list[dict] = []
+    try:
+        from duckduckgo_search import AsyncDDGS
+        async with AsyncDDGS(timeout=25) as ddgs:
+            raw = await ddgs.text(query, max_results=num)
+        for r in (raw or []):
+            url = r.get("href", "")
+            if not url:
+                continue
+            results.append({
+                "title": r.get("title", ""),
+                "url": url,
+                "snippet": r.get("body", ""),
+                "source": urlparse(url).netloc.replace("www.", "") if url else "",
+                "published_at": None,
+                "engine": "duckduckgo",
+            })
+    except Exception as exc:
+        logger.warning("[ddg] AsyncDDGS failed (%s); falling back to sync DDGS", exc)
+        # Fallback: sync DDGS in a thread pool
+        def _sync_ddg() -> list[dict]:
+            from duckduckgo_search import DDGS
+            out: list[dict] = []
+            try:
+                with DDGS(timeout=25) as ddgs:
+                    for r in ddgs.text(query, max_results=num):
+                        url = r.get("href", "")
+                        if url:
+                            out.append({
+                                "title": r.get("title", ""),
+                                "url": url,
+                                "snippet": r.get("body", ""),
+                                "source": urlparse(url).netloc.replace("www.", "") if url else "",
+                                "published_at": None,
+                                "engine": "duckduckgo",
+                            })
+            except Exception as e2:
+                logger.warning("[ddg] sync fallback also failed: %s", e2)
+            return out
+        results = await asyncio.to_thread(_sync_ddg)
 
-    Uses primp (browser TLS impersonation) internally — much more reliable
-    than raw HTTP scraping.  Runs the sync DDGS call in a thread pool.
-    """
-    def _sync() -> list[dict]:
-        from duckduckgo_search import DDGS
-        results: list[dict] = []
-        try:
-            with DDGS(timeout=20) as ddgs:
-                for r in ddgs.text(query, max_results=num):
-                    url = r.get("href", "")
-                    results.append({
-                        "title": r.get("title", ""),
-                        "url": url,
-                        "snippet": r.get("body", ""),
-                        "source": urlparse(url).netloc.replace("www.", "") if url else "",
-                        "published_at": None,
-                        "engine": "duckduckgo",
-                    })
-        except Exception as exc:
-            logger.warning("[ddg] library search failed: %s", exc)
-        return results
-
-    results = await asyncio.to_thread(_sync)
     logger.debug("[ddg] %d results for '%s'", len(results), query[:60])
     return results
 
@@ -322,53 +339,88 @@ async def bing_search_api(query: str, api_key: str, num: int = 10) -> list[dict]
 
 # ── Bing HTML scraping (curl_cffi browser impersonation) ─────────────────────
 
+def _unwrap_bing_ck_url(href: str) -> str:
+    """Decode a Bing /ck/a?...&u=a1<base64url>... tracking redirect.
+
+    Bing embeds the destination URL as base64url after the 'a1' prefix in the
+    'u' query parameter.  Returns the real URL, or '' if it can't be decoded.
+    """
+    if "bing.com/ck/" not in href:
+        return href
+    try:
+        import base64
+        from urllib.parse import parse_qs
+        qs = parse_qs(urlparse(href).query)
+        u = qs.get("u", [""])[0]
+        if u.startswith("a1"):
+            b64 = u[2:].replace("-", "+").replace("_", "/")
+            b64 += "=" * (-len(b64) % 4)
+            decoded = base64.b64decode(b64).decode("utf-8", errors="ignore")
+            if decoded.startswith("http"):
+                return decoded
+    except Exception:
+        pass
+    return ""   # undecodable → caller should skip
+
+
 def _bing_parse_page(html: str) -> list[dict]:
-    """Parse one Bing HTML result page."""
+    """Parse one Bing SERP page.  Handles /ck/a?... tracking redirects."""
     soup = BeautifulSoup(html, "lxml")
     results: list[dict] = []
-    # Try multiple selector strategies in order of reliability
-    for container_sel, link_sel, snippet_sel in [
-        ("li.b_algo",      "h2 a",  ".b_caption p, .b_snippet"),
-        (".b_algo",        "h2 a",  ".b_caption p"),
-        ("#b_results > li","h2 a",  "p"),
-    ]:
-        containers = soup.select(container_sel)
-        if not containers:
+    seen: set[str] = set()
+
+    for li in soup.select("li.b_algo, .b_algo"):
+        h2 = li.find("h2")
+        if not h2:
             continue
-        for el in containers:
-            a = el.select_one(link_sel)
-            if not a:
-                continue
-            title = a.get_text(strip=True)
-            url = a.get("href", "")
-            if not url or not url.startswith("http") or not title:
-                continue
-            snippet_el = el.select_one(snippet_sel)
-            snippet = snippet_el.get_text(strip=True) if snippet_el else ""
-            try:
-                source = urlparse(url).netloc.replace("www.", "")
-            except Exception:
-                source = ""
-            results.append({
-                "title": title, "url": url, "snippet": snippet,
-                "source": source, "published_at": None, "engine": "bing",
-            })
-        if results:
-            break
+        a = h2.find("a", href=True)
+        if not a:
+            continue
+        title = a.get_text(strip=True)
+        raw_href = a.get("href", "")
+
+        if not raw_href:
+            continue
+        if "bing.com/ck/" in raw_href:
+            url = _unwrap_bing_ck_url(raw_href)
+        elif raw_href.startswith("http"):
+            url = raw_href
+        else:
+            url = ""
+
+        if not url or not title or url in seen:
+            continue
+
+        snippet = ""
+        for sel in [".b_snippet", ".b_caption p", "p.b_para1", "p"]:
+            el = li.select_one(sel)
+            if el:
+                snippet = el.get_text(strip=True)[:300]
+                break
+
+        try:
+            source = urlparse(url).netloc.replace("www.", "")
+        except Exception:
+            source = ""
+
+        seen.add(url)
+        results.append({
+            "title": title, "url": url, "snippet": snippet,
+            "source": source, "published_at": None, "engine": "bing",
+        })
+
     return results
 
 
-async def bing_html_search(query: str, num: int = 30) -> list[dict]:
+async def bing_html_search(query: str, num: int = 50) -> list[dict]:
     """Bing HTML scraping via curl_cffi browser impersonation.
 
-    Impersonates Chrome TLS fingerprint so Bing doesn't block the request.
-    Fetches pages concurrently inside a shared session (cookie persistence).
+    Uses Chrome TLS fingerprint so Bing doesn't block; decodes /ck/a tracking URLs.
     """
     from curl_cffi.requests import AsyncSession
 
-    pages_needed = min(5, (num + 9) // 10)
+    pages_needed = min(10, (num + 9) // 10)
     offsets = [1 + i * 10 for i in range(pages_needed)]
-
     seen: set[str] = set()
     all_results: list[dict] = []
 
@@ -411,57 +463,82 @@ def _unwrap_google_url(href: str) -> str:
 
 
 def _google_parse_page(html: str) -> list[dict]:
-    """Parse Google Search result HTML.
-
-    Strategies (most to least reliable):
-      1. div.yuRUbf — canonical link wrapper Google has used for years
-      2. h3 inside any <a href=http…> — universal fallback
-    """
+    """Parse Google Search result HTML.  Tries several selector strategies."""
     soup = BeautifulSoup(html, "lxml")
     results: list[dict] = []
     seen: set[str] = set()
 
-    # Strategy 1: div.yuRUbf contains the result link + h3
-    for yuRUbf in soup.select("div.yuRUbf, div.kb0PBd"):
-        a = yuRUbf.select_one("a[href]")
-        if not a:
-            continue
-        href = _unwrap_google_url(a.get("href", ""))
-        if not href.startswith("http") or href in seen:
-            continue
-        h3 = a.find("h3") or yuRUbf.find("h3")
-        if not h3:
-            continue
-        title = h3.get_text(strip=True)
-        if not title:
-            continue
-        # Snippet: look in the enclosing result block
-        snippet = ""
-        block = yuRUbf.find_parent("div", class_=lambda c: c and "g" in c.split())
-        if block:
-            for cls in ("VwiC3b", "IsZvec", "s3v9rd", "st"):
-                el = block.select_one(f".{cls}")
+    # Strategy 1: div.yuRUbf / div.kb0PBd / div.N54PNb — canonical link wrappers
+    for container_sel in ("div.yuRUbf", "div.kb0PBd", "div.N54PNb", "div.hlcw0c"):
+        for wrap in soup.select(container_sel):
+            a = wrap.select_one("a[href]")
+            if not a:
+                continue
+            href = _unwrap_google_url(a.get("href", ""))
+            if not href.startswith("http") or href in seen:
+                continue
+            h3 = a.find("h3") or wrap.find("h3")
+            if not h3:
+                continue
+            title = h3.get_text(strip=True)
+            if not title:
+                continue
+            snippet = ""
+            # Walk up to find snippet in same result block
+            block = wrap.find_parent("div", class_=True)
+            if block:
+                for cls in ("VwiC3b", "IsZvec", "s3v9rd", "st", "yDYNvb"):
+                    el = block.select_one(f".{cls}")
+                    if el:
+                        snippet = el.get_text(separator=" ", strip=True)[:300]
+                        break
+            try:
+                source = urlparse(href).netloc.replace("www.", "")
+            except Exception:
+                source = ""
+            seen.add(href)
+            results.append({"title": title, "url": href, "snippet": snippet,
+                             "source": source, "published_at": None, "engine": "google"})
+        if results:
+            break
+
+    # Strategy 2: div.g containers
+    if not results:
+        for g in soup.select("div.g"):
+            a = g.select_one("a[href]")
+            if not a:
+                continue
+            href = _unwrap_google_url(a.get("href", ""))
+            if not href.startswith("http") or "google.com" in href or href in seen:
+                continue
+            h3 = g.find("h3")
+            if not h3:
+                continue
+            title = h3.get_text(strip=True)
+            if not title:
+                continue
+            snippet = ""
+            for cls in ("VwiC3b", "IsZvec", "st", "yDYNvb"):
+                el = g.select_one(f".{cls}")
                 if el:
                     snippet = el.get_text(separator=" ", strip=True)[:300]
                     break
-        try:
-            source = urlparse(href).netloc.replace("www.", "")
-        except Exception:
-            source = ""
-        seen.add(href)
-        results.append({
-            "title": title, "url": href, "snippet": snippet,
-            "source": source, "published_at": None, "engine": "google",
-        })
+            try:
+                source = urlparse(href).netloc.replace("www.", "")
+            except Exception:
+                source = ""
+            seen.add(href)
+            results.append({"title": title, "url": href, "snippet": snippet,
+                             "source": source, "published_at": None, "engine": "google"})
 
-    # Strategy 2: any h3 whose nearest ancestor <a> points to an external URL
+    # Strategy 3: universal h3-inside-<a> fallback
     if not results:
         for h3 in soup.find_all("h3"):
             a = h3.find_parent("a") or h3.find("a")
             if not a:
                 continue
             href = _unwrap_google_url(a.get("href", ""))
-            if not href.startswith("http") or href in seen:
+            if not href.startswith("http") or "google.com" in href or href in seen:
                 continue
             title = h3.get_text(strip=True)
             if not title:
@@ -479,25 +556,18 @@ def _google_parse_page(html: str) -> list[dict]:
             except Exception:
                 source = ""
             seen.add(href)
-            results.append({
-                "title": title, "url": href, "snippet": snippet,
-                "source": source, "published_at": None, "engine": "google",
-            })
+            results.append({"title": title, "url": href, "snippet": snippet,
+                             "source": source, "published_at": None, "engine": "google"})
 
     return results
 
 
-async def google_html_search(query: str, num: int = 20) -> list[dict]:
-    """Google HTML scraping via curl_cffi browser impersonation.
-
-    Impersonates Chrome TLS fingerprint, which bypasses most bot-detection.
-    Falls back gracefully on CAPTCHA.
-    """
+async def google_html_search(query: str, num: int = 30) -> list[dict]:
+    """Google HTML scraping via curl_cffi Chrome impersonation.  Falls back gracefully on CAPTCHA."""
     from curl_cffi.requests import AsyncSession
 
-    pages_needed = min(3, (num + 9) // 10)
+    pages_needed = min(5, (num + 9) // 10)
     offsets = [i * 10 for i in range(pages_needed)]
-
     seen: set[str] = set()
     all_results: list[dict] = []
 
@@ -506,7 +576,7 @@ async def google_html_search(query: str, num: int = 20) -> list[dict]:
             responses = await asyncio.gather(*[
                 session.get(
                     "https://www.google.com/search",
-                    params={"q": query, "start": start, "num": 10, "hl": "en", "gl": "us"},
+                    params={"q": query, "start": start, "num": 10, "hl": "en", "gl": "us", "ie": "UTF-8"},
                 )
                 for start in offsets
             ], return_exceptions=True)
@@ -530,42 +600,199 @@ async def google_html_search(query: str, num: int = 20) -> list[dict]:
     return all_results[:num]
 
 
+# ── Yahoo Search (Bing index, clean extractable URLs) ────────────────────────
+
+def _yahoo_real_url(href: str) -> str:
+    """Extract destination URL from Yahoo's /RU=ENCODED_URL/RK= redirect."""
+    if "/RU=" in href:
+        try:
+            from urllib.parse import unquote
+            ru_idx = href.index("/RU=") + 4
+            rk_idx = href.find("/RK=", ru_idx)
+            end = rk_idx if rk_idx != -1 else len(href)
+            return unquote(href[ru_idx:end])
+        except (ValueError, IndexError):
+            pass
+    if href.startswith("http") and "yahoo.com" not in href:
+        return href
+    return ""
+
+
+async def yahoo_search(query: str, num: int = 50) -> list[dict]:
+    """Yahoo Search — uses Bing's index but returns clean (non-tracking) URLs."""
+    from curl_cffi.requests import AsyncSession
+
+    pages_needed = min(10, (num + 9) // 10)
+    seen: set[str] = set()
+    all_results: list[dict] = []
+
+    try:
+        async with AsyncSession(impersonate="chrome124") as session:
+            responses = await asyncio.gather(*[
+                session.get(
+                    "https://search.yahoo.com/search",
+                    params={"p": query, "b": 1 + i * 10, "pz": 10},
+                )
+                for i in range(pages_needed)
+            ], return_exceptions=True)
+
+        for resp in responses:
+            if isinstance(resp, Exception):
+                logger.warning("[yahoo] page failed: %s", resp)
+                continue
+            soup = BeautifulSoup(resp.text, "lxml")
+            for result in soup.select("div.algo, li.first, .dd"):
+                h = result.find("h3") or result.find("h2")
+                if not h:
+                    continue
+                a = h.find("a", href=True)
+                if not a:
+                    continue
+                title = a.get_text(strip=True)
+                url = _yahoo_real_url(a.get("href", ""))
+                if not url or not title or url in seen:
+                    continue
+                snippet = ""
+                for sel in ["p.fc-falcon", ".compText span", "p.fst", "p"]:
+                    el = result.select_one(sel)
+                    if el:
+                        snippet = el.get_text(strip=True)[:300]
+                        break
+                try:
+                    source = urlparse(url).netloc.replace("www.", "")
+                except Exception:
+                    source = ""
+                seen.add(url)
+                all_results.append({"title": title, "url": url, "snippet": snippet,
+                                     "source": source, "published_at": None, "engine": "yahoo"})
+    except Exception as exc:
+        logger.warning("[yahoo] search failed: %s", exc)
+
+    logger.debug("[yahoo] %d results for '%s'", len(all_results), query[:60])
+    return all_results[:num]
+
+
+# ── Startpage Search (Google results, privacy-first proxy) ───────────────────
+
+def _startpage_parse(html: str) -> list[dict]:
+    soup = BeautifulSoup(html, "lxml")
+    results: list[dict] = []
+    seen: set[str] = set()
+
+    for container_sel in ["article.result", ".w-gl .result", "div.result"]:
+        containers = soup.select(container_sel)
+        if not containers:
+            continue
+        for container in containers:
+            a = container.select_one("a.result-title, h3 a, h2 a")
+            if not a:
+                # Try any external <a>
+                a = container.find("a", href=lambda h: h and h.startswith("http") and "startpage.com" not in h)
+            if not a:
+                continue
+            href = a.get("href", "")
+            if not href.startswith("http") or "startpage.com" in href or href in seen:
+                continue
+            title = a.get_text(strip=True)
+            if not title:
+                h = container.find("h3") or container.find("h2")
+                title = h.get_text(strip=True) if h else ""
+            if not title:
+                continue
+            snippet = ""
+            for sel in ["p.result-description", ".result-intro", ".description", "p"]:
+                el = container.select_one(sel)
+                if el:
+                    snippet = el.get_text(strip=True)[:300]
+                    break
+            try:
+                source = urlparse(href).netloc.replace("www.", "")
+            except Exception:
+                source = ""
+            seen.add(href)
+            results.append({"title": title, "url": href, "snippet": snippet,
+                             "source": source, "published_at": None, "engine": "startpage"})
+        if results:
+            break
+
+    return results
+
+
+async def startpage_search(query: str, num: int = 30) -> list[dict]:
+    """Startpage.com — Google results proxied through a privacy-focused engine."""
+    from curl_cffi.requests import AsyncSession
+
+    pages_needed = min(5, (num + 9) // 10)
+    seen: set[str] = set()
+    all_results: list[dict] = []
+
+    try:
+        async with AsyncSession(impersonate="chrome124") as session:
+            responses = await asyncio.gather(*[
+                session.get(
+                    "https://www.startpage.com/sp/search",
+                    params={"q": query, "page": i + 1, "language": "english", "cat": "web"},
+                )
+                for i in range(pages_needed)
+            ], return_exceptions=True)
+
+        for resp in responses:
+            if isinstance(resp, Exception):
+                logger.warning("[startpage] page failed: %s", resp)
+                continue
+            for item in _startpage_parse(resp.text):
+                if item["url"] not in seen:
+                    seen.add(item["url"])
+                    all_results.append(item)
+    except Exception as exc:
+        logger.warning("[startpage] search failed: %s", exc)
+
+    logger.debug("[startpage] %d results for '%s'", len(all_results), query[:60])
+    return all_results[:num]
+
+
 # ── Full parallel search (all engines combined) ───────────────────────────────
 
-async def full_web_search(query: str, num: int = 50) -> dict:
-    """Run DuckDuckGo, Bing HTML, and Google HTML in parallel.
+async def full_web_search(query: str, num: int = 100) -> dict:
+    """Run DDG, Bing, Google, Yahoo, and Startpage in parallel.
 
-    Merges and deduplicates results from all three engines.
-    Returns a dict with 'results', 'total', and per-engine counts.
+    All 5 engines run simultaneously; results are merged and deduplicated by
+    normalised URL.  Each engine gets its own num-sized budget so that slow or
+    partially-blocked engines don't reduce the total.
     """
-    # Give each engine its own budget equal to `num` — deduplication trims the total.
-    # This ensures that if one engine returns fewer unique results, the others fill in.
     ddg_task   = duckduckgo_search(query, num=num)
     bing_task  = bing_html_search(query, num=num)
-    goog_task  = google_html_search(query, num=min(num, 30))
+    goog_task  = google_html_search(query, num=num)
+    yahoo_task = yahoo_search(query, num=num)
+    sp_task    = startpage_search(query, num=num)
 
-    ddg_res, bing_res, goog_res = await asyncio.gather(
-        ddg_task, bing_task, goog_task, return_exceptions=True,
+    ddg_r, bing_r, goog_r, yahoo_r, sp_r = await asyncio.gather(
+        ddg_task, bing_task, goog_task, yahoo_task, sp_task,
+        return_exceptions=True,
     )
 
-    # Safely unwrap (gather returns Exception objects when return_exceptions=True)
     def _safe(r: object) -> list[dict]:
         if isinstance(r, Exception):
             logger.warning("[full_search] engine error: %s", r)
             return []
         return r or []
 
-    ddg_res  = _safe(ddg_res)
-    bing_res = _safe(bing_res)
-    goog_res = _safe(goog_res)
+    ddg_r   = _safe(ddg_r)
+    bing_r  = _safe(bing_r)
+    goog_r  = _safe(goog_r)
+    yahoo_r = _safe(yahoo_r)
+    sp_r    = _safe(sp_r)
 
-    logger.info("[full_search] raw counts — DDG:%d Bing:%d Google:%d for '%s'",
-                len(ddg_res), len(bing_res), len(goog_res), query[:60])
+    logger.info(
+        "[full_search] raw — DDG:%d Bing:%d Google:%d Yahoo:%d Startpage:%d for '%s'",
+        len(ddg_r), len(bing_r), len(goog_r), len(yahoo_r), len(sp_r), query[:60],
+    )
 
-    # Merge, deduplicate by normalized URL
+    # Merge in priority order: DDG → Yahoo → Bing → Startpage → Google
+    # (Yahoo first among Bing-family since it has clean non-tracking URLs)
     seen: set[str] = set()
     merged: list[dict] = []
-    for item in ddg_res + bing_res + goog_res:
+    for item in ddg_r + yahoo_r + bing_r + sp_r + goog_r:
         url = item.get("url", "")
         norm = url.strip().lower().rstrip("/").split("?")[0]
         if norm and norm not in seen:
@@ -576,9 +803,11 @@ async def full_web_search(query: str, num: int = 50) -> dict:
         "results": merged[:num],
         "total": len(merged),
         "engines": {
-            "duckduckgo": len(ddg_res),
-            "bing": len(bing_res),
-            "google": len(goog_res),
+            "duckduckgo": len(ddg_r),
+            "bing": len(bing_r),
+            "google": len(goog_r),
+            "yahoo": len(yahoo_r),
+            "startpage": len(sp_r),
         },
     }
 

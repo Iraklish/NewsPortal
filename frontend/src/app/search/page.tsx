@@ -6,10 +6,12 @@ import { Search, Loader2, ExternalLink, Download, CheckCircle2, AlertCircle, Ref
 import clsx from 'clsx'
 
 const ENGINE_COLORS: Record<string, string> = {
-  duckduckgo:  'bg-orange-500/10 text-orange-400 border-orange-500/25',
-  bing:        'bg-sky-500/10  text-sky-400  border-sky-500/25',
-  google:      'bg-blue-500/10 text-blue-400 border-blue-500/25',
-  google_cse:  'bg-blue-500/10 text-blue-400 border-blue-500/25',
+  duckduckgo: 'bg-orange-500/10 text-orange-400 border-orange-500/25',
+  bing:       'bg-sky-500/10   text-sky-400   border-sky-500/25',
+  google:     'bg-blue-500/10  text-blue-400  border-blue-500/25',
+  google_cse: 'bg-blue-500/10  text-blue-400  border-blue-500/25',
+  yahoo:      'bg-purple-500/10 text-purple-400 border-purple-500/25',
+  startpage:  'bg-teal-500/10  text-teal-400  border-teal-500/25',
 }
 
 const ENGINE_LABELS: Record<string, string> = {
@@ -17,18 +19,32 @@ const ENGINE_LABELS: Record<string, string> = {
   bing:       'Bing',
   google:     'Google',
   google_cse: 'Google',
+  yahoo:      'Yahoo',
+  startpage:  'Startpage',
 }
 
-type Filter = 'all' | 'duckduckgo' | 'bing' | 'google'
+type EngineKey = 'duckduckgo' | 'bing' | 'google' | 'yahoo' | 'startpage'
+type Filter = 'all' | EngineKey
+
+type Engines = { duckduckgo: number; bing: number; google: number; yahoo: number; startpage: number }
+
+const FILTER_TABS: Array<{ key: Filter; label: string }> = [
+  { key: 'all',        label: 'All' },
+  { key: 'duckduckgo', label: 'DDG' },
+  { key: 'bing',       label: 'Bing' },
+  { key: 'yahoo',      label: 'Yahoo' },
+  { key: 'startpage',  label: 'Startpage' },
+  { key: 'google',     label: 'Google' },
+]
 
 export default function SearchPage() {
-  const [query, setQuery]       = useState('')
-  const [num, setNum]           = useState(50)
-  const [loading, setLoading]   = useState(false)
-  const [results, setResults]   = useState<WebSearchResult[]>([])
-  const [engines, setEngines]   = useState<{ duckduckgo: number; bing: number; google: number } | null>(null)
-  const [error, setError]       = useState('')
-  const [filter, setFilter]     = useState<Filter>('all')
+  const [query, setQuery]         = useState('')
+  const [num, setNum]             = useState(100)
+  const [loading, setLoading]     = useState(false)
+  const [results, setResults]     = useState<WebSearchResult[]>([])
+  const [engines, setEngines]     = useState<Engines | null>(null)
+  const [error, setError]         = useState('')
+  const [filter, setFilter]       = useState<Filter>('all')
   const [importing, setImporting] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({})
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -48,7 +64,7 @@ export default function SearchPage() {
       const data = await searchApi.search(q, num)
       if (data.error) setError(data.error)
       setResults(data.results)
-      setEngines(data.engines)
+      setEngines(data.engines as Engines)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -71,7 +87,11 @@ export default function SearchPage() {
     ? results
     : results.filter(r => (r.engine === 'google_cse' ? 'google' : r.engine) === filter)
 
-  const googleCount = (engines?.google ?? 0)
+  function engineCount(f: Filter): number {
+    if (!engines) return 0
+    if (f === 'all') return results.length
+    return (engines as Record<string, number>)[f] ?? 0
+  }
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -82,7 +102,7 @@ export default function SearchPage() {
           Web Search
         </h1>
         <p className="text-slate-500 text-sm mt-1">
-          Runs DuckDuckGo, Bing and Google simultaneously — up to {num} combined results.
+          Runs DDG, Bing, Yahoo, Startpage &amp; Google simultaneously — up to {num} combined results.
         </p>
       </div>
 
@@ -103,7 +123,7 @@ export default function SearchPage() {
           onChange={e => setNum(Number(e.target.value))}
           className="bg-[#0d1117] border border-[#1e2433] rounded-lg px-2 py-2.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500"
         >
-          {[10, 20, 30, 50].map(n => (
+          {[10, 20, 30, 50, 100].map(n => (
             <option key={n} value={n}>Max {n}</option>
           ))}
         </select>
@@ -129,26 +149,20 @@ export default function SearchPage() {
       {engines && (
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <span className="text-xs text-slate-500">{results.length} result{results.length !== 1 ? 's' : ''} —</span>
-          {(['all', 'duckduckgo', 'bing', 'google'] as Filter[]).map(f => {
-            const count = f === 'all' ? results.length
-              : f === 'duckduckgo' ? engines.duckduckgo
-              : f === 'bing'       ? engines.bing
-              : googleCount
-            return (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={clsx(
-                  'text-[10px] px-2.5 py-1 rounded-full border font-medium transition-colors',
-                  filter === f
-                    ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40'
-                    : 'text-slate-400 border-[#1e2433] hover:border-slate-500',
-                )}
-              >
-                {f === 'all' ? 'All' : ENGINE_LABELS[f]} ({count})
-              </button>
-            )
-          })}
+          {FILTER_TABS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setFilter(key)}
+              className={clsx(
+                'text-[10px] px-2.5 py-1 rounded-full border font-medium transition-colors',
+                filter === key
+                  ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40'
+                  : 'text-slate-400 border-[#1e2433] hover:border-slate-500',
+              )}
+            >
+              {label} ({engineCount(key)})
+            </button>
+          ))}
           <button
             onClick={runSearch}
             disabled={loading}
@@ -163,7 +177,7 @@ export default function SearchPage() {
       {/* Loading skeleton */}
       {loading && (
         <div className="space-y-3">
-          {Array.from({ length: 6 }).map((_, i) => (
+          {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="bg-[#0d1117] border border-[#1e2433] rounded-xl p-4 animate-pulse">
               <div className="h-3.5 bg-[#1e2433] rounded w-3/4 mb-2" />
               <div className="h-2.5 bg-[#1e2433] rounded w-1/3 mb-3" />
@@ -259,7 +273,7 @@ export default function SearchPage() {
 
       {!loading && results.length === 0 && !engines && (
         <div className="text-center py-20 text-slate-700 text-sm">
-          Enter a query above to search across DuckDuckGo, Bing and Google simultaneously.
+          Enter a query above to search across DDG, Bing, Yahoo, Startpage and Google simultaneously.
         </div>
       )}
     </div>

@@ -717,18 +717,18 @@ export interface WebSearchResult {
   snippet?: string
   source?: string
   published_at?: string
-  engine: 'duckduckgo' | 'bing' | 'google' | 'google_cse' | string
+  engine: 'duckduckgo' | 'bing' | 'google' | 'google_cse' | 'yahoo' | 'startpage' | string
 }
 
 export interface WebSearchResponse {
   results: WebSearchResult[]
   total: number
-  engines: { duckduckgo: number; bing: number; google: number }
+  engines: { duckduckgo: number; bing: number; google: number; yahoo: number; startpage: number }
   error?: string
 }
 
 export const searchApi = {
-  search(q: string, num = 50) {
+  search(q: string, num = 100) {
     return request<WebSearchResponse>(`/search?q=${encodeURIComponent(q)}&num=${num}`)
   },
 }
