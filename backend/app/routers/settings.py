@@ -27,6 +27,9 @@ _SECRET_KEYS = [
     "google_search_cx",
     "bing_search_api_key",
     "news_api_key",
+    "telegram_api_id",
+    "telegram_api_hash",
+    "telegram_phone",
 ]
 
 _NON_SECRET_KEYS = [

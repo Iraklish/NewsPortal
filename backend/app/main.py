@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import SessionLocal, init_db
 from .logging_config import configure_logging
-from .routers import analysis, articles, logs, mindmap, settings, sources, stocks
+from .routers import analysis, articles, logs, mindmap, settings, sources, stocks, telegram
 
 
 @asynccontextmanager
@@ -57,6 +57,7 @@ app.include_router(stocks.router, prefix="/stocks", tags=["stocks"])
 app.include_router(mindmap.router, prefix="/mindmap", tags=["mindmap"])
 app.include_router(sources.router, prefix="/sources", tags=["sources"])
 app.include_router(logs.router, prefix="/logs", tags=["logs"])
+app.include_router(telegram.router, prefix="/telegram", tags=["telegram"])
 
 
 @app.get("/health")

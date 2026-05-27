@@ -144,6 +144,9 @@ class AppSettingsOut(BaseModel):
     google_search_cx: KeyStatus
     bing_search_api_key: KeyStatus
     news_api_key: KeyStatus
+    telegram_api_id: KeyStatus
+    telegram_api_hash: KeyStatus
+    telegram_phone: KeyStatus
     default_ai_provider: str
     default_ai_model: str
     custom_ai_endpoint: Optional[str] = None
@@ -192,6 +195,37 @@ class RssSourceUpdate(BaseModel):
 class MindMapRequest(BaseModel):
     subject: str
     aspects: List[str] = []
+
+
+# ── TelegramSource ────────────────────────────────────────────────────────────
+
+class TelegramSourceOut(BaseModel):
+    id: int
+    channel_id: str
+    name: Optional[str] = None
+    enabled: bool
+    lookback_hours: int
+    created_at: Optional[datetime] = None
+    last_fetched_at: Optional[datetime] = None
+    last_status: Optional[str] = None
+    last_error: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class TelegramSourceCreate(BaseModel):
+    channel_id: str            # numeric ID (negative int as string) or @username
+    name: Optional[str] = None
+    enabled: bool = True
+    lookback_hours: int = 1
+
+
+class TelegramSourceUpdate(BaseModel):
+    channel_id: Optional[str] = None
+    name: Optional[str] = None
+    enabled: Optional[bool] = None
+    lookback_hours: Optional[int] = None
 
 
 class MindMapOut(BaseModel):

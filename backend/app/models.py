@@ -116,6 +116,20 @@ class DirectedReport(Base):
     web_result_count = Column(Integer, default=0)
 
 
+class TelegramSource(Base):
+    __tablename__ = "telegram_sources"
+    id = Column(Integer, primary_key=True, index=True)
+    # channel_id can be a numeric ID (as string) or a @username / invite-slug
+    channel_id = Column(String(128), unique=True, nullable=False, index=True)
+    name = Column(String(256))
+    enabled = Column(Boolean, default=True, nullable=False)
+    lookback_hours = Column(Integer, default=1, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+    last_fetched_at = Column(DateTime)
+    last_status = Column(String(32))   # ok | empty | error
+    last_error = Column(Text)
+
+
 class RssSource(Base):
     __tablename__ = "rss_sources"
     id = Column(Integer, primary_key=True, index=True)

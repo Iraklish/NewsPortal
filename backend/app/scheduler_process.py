@@ -32,6 +32,7 @@ from app.logging_config import configure_logging, SCHEDULER_LOG
 from app.models import AppSettings, Article, Analysis
 from app.services.analyzer import analyze_article
 from app.services.news_fetcher import fetch_all_sources
+from app.services.telegram_fetcher import fetch_all_telegram_sources
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +129,11 @@ async def _run_cycle() -> None:
     db = SessionLocal()
     try:
         new_ids = await fetch_all_sources(db)
+        tg_ids = await fetch_all_telegram_sources(db)
+        new_ids = new_ids + tg_ids
         elapsed_fetch = (datetime.now(timezone.utc).replace(tzinfo=None) - t_start).total_seconds()
-        logger.info("[scheduler] cycle #%d — fetch complete: %d new article(s) in %.1fs",
-                    cycle_num, len(new_ids), elapsed_fetch)
+        logger.info("[scheduler] cycle #%d — fetch complete: %d new article(s) (%d telegram) in %.1fs",
+                    cycle_num, len(new_ids), len(tg_ids), elapsed_fetch)
 
         # Persist last-run timestamp for the API status widget.
         _db_set(db, "scheduler_last_run_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat())

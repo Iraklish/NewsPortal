@@ -296,6 +296,22 @@ export default function SettingsPage() {
           </div>
         </Card>
 
+        {/* Telegram */}
+        <Card title="Telegram">
+          <p className="text-xs text-slate-500 mb-3">
+            Used to fetch messages from Telegram channels and groups on the same schedule as RSS feeds.
+            Get your credentials at <a href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">my.telegram.org/apps</a>.
+          </p>
+          <div className="space-y-2">
+            <KeyRow label="API ID" field="telegram_api_id" hasKey={settings?.telegram_api_id?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+            <KeyRow label="API Hash" field="telegram_api_hash" hasKey={settings?.telegram_api_hash?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+            <KeyRow label="Phone Number" field="telegram_phone" hasKey={settings?.telegram_phone?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+          </div>
+          <p className="text-[10px] text-slate-600 mt-3">
+            After saving credentials, go to <a href="/telegram" className="text-blue-400 hover:underline">Telegram Channels</a> to authorise the session and add channels.
+          </p>
+        </Card>
+
         {/* ─────────  NEWS SOURCES (RSS)  ───────── */}
         <Section icon={Newspaper} label="News Sources" description="Manage RSS feeds the scheduler polls hourly" />
 

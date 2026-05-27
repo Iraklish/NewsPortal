@@ -14,3 +14,4 @@ yfinance>=0.2.50
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
 python-dotenv>=1.0.0
+telethon>=1.36.0

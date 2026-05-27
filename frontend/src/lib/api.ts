@@ -183,6 +183,9 @@ export interface AppSettingsOut {
   google_search_cx: KeyStatus
   bing_search_api_key: KeyStatus
   news_api_key: KeyStatus
+  telegram_api_id: KeyStatus
+  telegram_api_hash: KeyStatus
+  telegram_phone: KeyStatus
   custom_ai_endpoint?: string
   custom_ai_model?: string
   chat_system_prompt: string
@@ -211,6 +214,9 @@ export interface SettingsUpdate {
   google_search_api_key?: string
   google_search_cx?: string
   bing_search_api_key?: string
+  telegram_api_id?: string
+  telegram_api_hash?: string
+  telegram_phone?: string
   news_api_key?: string
   chat_system_prompt?: string
   ask_system_prompt?: string
@@ -558,6 +564,74 @@ export const sourcesApi = {
       next_fetch_at?: string | null
       fetch_interval_minutes: number
     }>('/sources/status')
+  },
+}
+
+// ─── Telegram ────────────────────────────────────────────────────────────────
+
+export interface TelegramSource {
+  id: number
+  channel_id: string
+  name?: string
+  enabled: boolean
+  lookback_hours: number
+  created_at?: string
+  last_fetched_at?: string
+  last_status?: string
+  last_error?: string
+}
+
+export const telegramApi = {
+  authStatus() {
+    return request<{ authorized: boolean; reason?: string }>('/telegram/auth/status')
+  },
+
+  requestCode(phone: string) {
+    return request<{ sent: boolean; phone: string }>('/telegram/auth/request-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone }),
+    })
+  },
+
+  signIn(code: string, password?: string) {
+    return request<{ authorized: boolean }>('/telegram/auth/sign-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, password: password ?? '' }),
+    })
+  },
+
+  list() {
+    return request<TelegramSource[]>('/telegram')
+  },
+
+  create(body: { channel_id: string; name?: string; enabled?: boolean; lookback_hours?: number }) {
+    return request<TelegramSource>('/telegram', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  update(id: number, body: Partial<{ channel_id: string; name: string; enabled: boolean; lookback_hours: number }>) {
+    return request<TelegramSource>(`/telegram/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  delete(id: number) {
+    return request<void>(`/telegram/${id}`, { method: 'DELETE' })
+  },
+
+  fetchAll() {
+    return request<{ sources_fetched: number; new_articles: number }>('/telegram/fetch', { method: 'POST' })
+  },
+
+  fetchOne(id: number) {
+    return request<{ new_articles: number; ids: number[] }>(`/telegram/${id}/fetch`, { method: 'POST' })
   },
 }
 
