@@ -213,17 +213,31 @@ export default function TelegramPage() {
               {authOk ? 'Session authorised' : 'Not authorised'}
             </span>
             {!credOk && (
-              <span className="text-[10px] text-slate-500">— set api_id &amp; api_hash in Settings first</span>
+              <span className="text-[10px] text-slate-500">
+                — set <a href="/settings" className="text-blue-400 hover:underline">api_id &amp; api_hash</a> in Settings first
+              </span>
             )}
           </div>
-          {!authOk && credOk && (
-            <button
-              onClick={() => setShowAuth(v => !v)}
-              className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-            >
-              {showAuth ? 'Hide' : 'Sign in'} {showAuth ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Re-check button: useful after saving credentials in Settings */}
+            {!authOk && (
+              <button
+                onClick={loadAll}
+                className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-white transition-colors"
+                title="Re-check after saving credentials"
+              >
+                <RefreshCw size={11} /> Re-check
+              </button>
+            )}
+            {!authOk && credOk && (
+              <button
+                onClick={() => setShowAuth(v => !v)}
+                className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                {showAuth ? 'Hide' : 'Sign in'} {showAuth ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              </button>
+            )}
+          </div>
         </div>
 
         {showAuth && !authOk && (

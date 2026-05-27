@@ -118,6 +118,9 @@ class SettingsUpdate(BaseModel):
     google_search_cx: Optional[str] = None
     bing_search_api_key: Optional[str] = None
     news_api_key: Optional[str] = None
+    telegram_api_id: Optional[str] = None
+    telegram_api_hash: Optional[str] = None
+    telegram_phone: Optional[str] = None
     default_ai_provider: Optional[str] = None
     default_ai_model: Optional[str] = None
     chat_system_prompt: Optional[str] = None
