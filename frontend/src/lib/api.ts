@@ -581,6 +581,15 @@ export interface TelegramSource {
   last_error?: string
 }
 
+export interface TelegramUnreadChannel {
+  channel_id: string
+  name: string
+  unread_count: number
+  is_group: boolean
+  is_channel: boolean
+  already_added: boolean
+}
+
 export const telegramApi = {
   authStatus() {
     return request<{ authorized: boolean; reason?: string }>('/telegram/auth/status')
@@ -632,6 +641,10 @@ export const telegramApi = {
 
   fetchOne(id: number) {
     return request<{ new_articles: number; ids: number[] }>(`/telegram/${id}/fetch`, { method: 'POST' })
+  },
+
+  listUnread() {
+    return request<TelegramUnreadChannel[]>('/telegram/unread')
   },
 }
 

@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { telegramApi, settingsApi, type TelegramSource } from '@/lib/api'
+import { telegramApi, type TelegramSource, type TelegramUnreadChannel } from '@/lib/api'
 import {
-  Send, Plus, Trash2, RefreshCw, Loader2, CheckCircle2, XCircle,
-  AlertCircle, Clock, ChevronDown, ChevronUp, ShieldCheck,
+  Send, Plus, Trash2, RefreshCw, Loader2, CheckCircle2,
+  ChevronDown, ChevronUp, ShieldCheck, Inbox,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -49,6 +49,16 @@ export default function TelegramPage() {
   const [fetching, setFetching] = useState(false)
   const [fetchResult, setFetchResult] = useState<{ sources_fetched: number; new_articles: number } | null>(null)
   const [fetchingOne, setFetchingOne] = useState<number | null>(null)
+
+  // Unread channels import
+  const [showUnread, setShowUnread] = useState(false)
+  const [unreadLoading, setUnreadLoading] = useState(false)
+  const [unreadChannels, setUnreadChannels] = useState<TelegramUnreadChannel[]>([])
+  const [unreadError, setUnreadError] = useState('')
+  const [selectedUnread, setSelectedUnread] = useState<Set<string>>(new Set())
+  const [unreadLookback, setUnreadLookback] = useState(1)
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<{ created: number; skipped: number } | null>(null)
 
   async function loadAll() {
     setLoading(true)
@@ -157,6 +167,71 @@ export default function TelegramPage() {
       await telegramApi.fetchOne(id)
       await loadAll()
     } catch {} finally { setFetchingOne(null) }
+  }
+
+  // ── Unread channels ───────────────────────────────────────────────────────
+
+  async function loadUnread() {
+    setUnreadLoading(true)
+    setUnreadError('')
+    setImportResult(null)
+    try {
+      const list = await telegramApi.listUnread()
+      setUnreadChannels(list)
+      // Pre-select all channels that are not already added
+      setSelectedUnread(new Set(list.filter(c => !c.already_added).map(c => c.channel_id)))
+    } catch (e: unknown) {
+      setUnreadError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setUnreadLoading(false)
+    }
+  }
+
+  function toggleUnreadPanel() {
+    if (!showUnread) {
+      setShowUnread(true)
+      loadUnread()
+    } else {
+      setShowUnread(false)
+    }
+  }
+
+  function toggleSelect(channelId: string) {
+    setSelectedUnread(prev => {
+      const next = new Set(prev)
+      if (next.has(channelId)) next.delete(channelId)
+      else next.add(channelId)
+      return next
+    })
+  }
+
+  async function importSelected() {
+    if (selectedUnread.size === 0) return
+    setImporting(true)
+    setImportResult(null)
+    let created = 0
+    let skipped = 0
+    for (const ch of unreadChannels) {
+      if (!selectedUnread.has(ch.channel_id)) continue
+      try {
+        await telegramApi.create({
+          channel_id: ch.channel_id,
+          name: ch.name || undefined,
+          lookback_hours: unreadLookback,
+          enabled: true,
+        })
+        created++
+      } catch {
+        skipped++
+      }
+    }
+    setImportResult({ created, skipped })
+    setImporting(false)
+    if (created > 0) {
+      await loadAll()
+      // Refresh unread list to update already_added flags
+      await loadUnread()
+    }
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -304,12 +379,23 @@ export default function TelegramPage() {
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
             Channels ({sources.length})
           </span>
-          <button
-            onClick={() => setShowAdd(v => !v)}
-            className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-          >
-            <Plus size={13} /> Add channel
-          </button>
+          <div className="flex items-center gap-3">
+            {authOk && (
+              <button
+                onClick={toggleUnreadPanel}
+                className="flex items-center gap-1.5 text-xs text-violet-400 hover:text-violet-300 transition-colors"
+              >
+                <Inbox size={13} />
+                {showUnread ? 'Hide unread' : 'Import unread'}
+              </button>
+            )}
+            <button
+              onClick={() => setShowAdd(v => !v)}
+              className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              <Plus size={13} /> Add channel
+            </button>
+          </div>
         </div>
 
         {showAdd && (
@@ -353,6 +439,127 @@ export default function TelegramPage() {
               </button>
             </div>
             {addError && <p className="text-xs text-red-400">{addError}</p>}
+          </div>
+        )}
+
+        {showUnread && (
+          <div className="p-4 border-b border-[#1e2433] bg-[#0a0f1e]">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Inbox size={13} className="text-violet-400" />
+                Channels with unread messages
+              </p>
+              <button
+                onClick={loadUnread}
+                disabled={unreadLoading}
+                className="p-1 text-slate-500 hover:text-white transition-colors"
+                title="Refresh"
+              >
+                {unreadLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              </button>
+            </div>
+
+            {unreadLoading && (
+              <p className="text-xs text-slate-500 flex items-center gap-2 py-2">
+                <Loader2 size={12} className="animate-spin" /> Fetching dialogs…
+              </p>
+            )}
+            {unreadError && <p className="text-xs text-red-400 mb-2">{unreadError}</p>}
+
+            {!unreadLoading && unreadChannels.length === 0 && !unreadError && (
+              <p className="text-xs text-slate-500 py-2">No channels / groups with unread messages found.</p>
+            )}
+
+            {!unreadLoading && unreadChannels.length > 0 && (
+              <>
+                <div className="space-y-1 max-h-64 overflow-y-auto pr-1 mb-3">
+                  {unreadChannels.map(ch => (
+                    <label
+                      key={ch.channel_id}
+                      className={clsx(
+                        'flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
+                        ch.already_added ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white/5',
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="accent-violet-500 w-3.5 h-3.5 flex-shrink-0"
+                        checked={selectedUnread.has(ch.channel_id)}
+                        disabled={ch.already_added}
+                        onChange={() => !ch.already_added && toggleSelect(ch.channel_id)}
+                      />
+                      <span className="flex-1 min-w-0">
+                        <span className="text-xs text-white truncate block">{ch.name || ch.channel_id}</span>
+                        <span className="text-[10px] text-slate-500 font-mono">{ch.channel_id}</span>
+                      </span>
+                      <span className="flex items-center gap-1.5 flex-shrink-0">
+                        <span className={clsx(
+                          'text-[10px] px-1.5 py-0.5 rounded',
+                          ch.is_channel ? 'bg-blue-500/15 text-blue-400' : 'bg-slate-500/20 text-slate-400',
+                        )}>
+                          {ch.is_channel ? 'channel' : 'group'}
+                        </span>
+                        <span className="text-[10px] text-amber-400 font-medium min-w-[2rem] text-right">
+                          +{ch.unread_count}
+                        </span>
+                        {ch.already_added && (
+                          <span className="text-[10px] text-emerald-500">✓ added</span>
+                        )}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3 pt-2 border-t border-[#1e2433]">
+                  <label className="flex items-center gap-1.5 text-xs text-slate-400">
+                    <span>Lookback:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={168}
+                      value={unreadLookback}
+                      onChange={e => setUnreadLookback(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-16 bg-[#0d1117] border border-[#1e2433] rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-violet-500"
+                    />
+                    <span>hours</span>
+                  </label>
+                  <button
+                    onClick={() => setSelectedUnread(
+                      new Set(unreadChannels.filter(c => !c.already_added).map(c => c.channel_id))
+                    )}
+                    className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    onClick={() => setSelectedUnread(new Set())}
+                    className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+                  >
+                    Clear
+                  </button>
+                  <div className="flex-1" />
+                  <button
+                    onClick={importSelected}
+                    disabled={importing || selectedUnread.size === 0}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 rounded text-xs text-white font-medium transition-colors"
+                  >
+                    {importing ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                    Import {selectedUnread.size > 0 ? `(${selectedUnread.size})` : ''}
+                  </button>
+                </div>
+
+                {importResult && (
+                  <p className={clsx(
+                    'text-xs mt-2 flex items-center gap-1',
+                    importResult.created > 0 ? 'text-emerald-400' : 'text-slate-400',
+                  )}>
+                    <CheckCircle2 size={12} />
+                    {importResult.created} channel(s) imported
+                    {importResult.skipped > 0 && `, ${importResult.skipped} skipped (already exist)`}
+                  </p>
+                )}
+              </>
+            )}
           </div>
         )}
 

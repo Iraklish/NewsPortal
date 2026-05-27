@@ -22,6 +22,15 @@ class RequestCodeIn(BaseModel):
     phone: str
 
 
+class UnreadChannel(BaseModel):
+    channel_id: str
+    name: str
+    unread_count: int
+    is_group: bool
+    is_channel: bool
+    already_added: bool
+
+
 class SignInIn(BaseModel):
     code: str
     password: str = ""   # only needed if 2FA is enabled
@@ -63,6 +72,28 @@ async def sign_in(body: SignInIn, db: Session = Depends(get_db)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Unread discovery ─────────────────────────────────────────────────────────
+
+@router.get("/unread", response_model=List[UnreadChannel])
+async def list_unread(db: Session = Depends(get_db)):
+    """Return all Telegram dialogs (groups/channels/bots) with unread messages."""
+    from ..services.telegram_fetcher import (
+        credentials_configured, check_authorized, list_unread_channels,
+    )
+    if not credentials_configured(db):
+        raise HTTPException(status_code=400, detail="Telegram credentials not configured")
+    try:
+        if not await check_authorized(db):
+            raise HTTPException(status_code=401, detail="Not authorised — please sign in first")
+        channels = await list_unread_channels(db)
+        return channels
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("[telegram] unread listing failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

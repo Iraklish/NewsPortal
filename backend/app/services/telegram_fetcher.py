@@ -258,6 +258,60 @@ async def fetch_telegram_channel(
     return new_ids
 
 
+# ── Unread channel discovery ────────────────────────────────────────────────
+
+async def list_unread_channels(db: Session) -> list[dict]:
+    """Return all dialogs (groups / channels / bots) that have unread messages.
+
+    Each item: channel_id (str), name, unread_count, is_group, is_channel,
+    already_added (True if the channel_id is already a TelegramSource row).
+    """
+    if not credentials_configured(db):
+        return []
+    from telethon import TelegramClient
+
+    api_id = int(_cred(db, "telegram_api_id"))
+    api_hash = _cred(db, "telegram_api_hash")
+
+    # Pre-load existing channel_ids for the 'already_added' flag
+    existing_ids: set[str] = {src.channel_id for src in db.query(TelegramSource).all()}
+
+    results: list[dict] = []
+
+    async with _get_lock():
+        client = TelegramClient(_SESSION_PATH, api_id, api_hash)
+        await client.connect()
+        try:
+            if not await client.is_user_authorized():
+                logger.warning("[telegram] list_unread: session not authorized")
+                return []
+            async for dialog in client.iter_dialogs():
+                is_bot = hasattr(dialog.entity, "bot") and bool(dialog.entity.bot)
+                if not (dialog.is_group or dialog.is_channel or is_bot):
+                    continue
+                if dialog.unread_count <= 0:
+                    continue
+                channel_id_str = str(dialog.id)
+                results.append({
+                    "channel_id": channel_id_str,
+                    "name": dialog.name or "",
+                    "unread_count": dialog.unread_count,
+                    "is_group": bool(dialog.is_group),
+                    "is_channel": bool(dialog.is_channel),
+                    "already_added": channel_id_str in existing_ids,
+                })
+            logger.info("[telegram] list_unread: found %d dialog(s) with unread messages", len(results))
+        except Exception as exc:
+            logger.exception("[telegram] list_unread error: %s", exc)
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+    return results
+
+
 # ── Scheduler entry point ────────────────────────────────────────────────────
 
 async def fetch_all_telegram_sources(db: Session) -> list[int]:
