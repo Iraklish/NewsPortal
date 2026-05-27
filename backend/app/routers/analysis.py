@@ -16,6 +16,7 @@ from ..schemas import (
     DirectedAnalysisRequest,
     DirectedReportOut,
     DirectedReportRequest,
+    ReportAskRequest,
 )
 from ..services.analyzer import analyze_article, run_directed_analysis
 from ..services.ai_client import call_ai, call_ai_grounded
@@ -84,6 +85,75 @@ def delete_report(report_id: int, db: Session = Depends(get_db)):
     db.delete(r)
     db.commit()
     return {"deleted": True, "id": report_id}
+
+
+@router.post("/reports/{report_id}/ask")
+async def ask_about_report(
+    report_id: int,
+    body: ReportAskRequest,
+    db: Session = Depends(get_db),
+):
+    """Answer follow-up questions about a specific directed report."""
+    r = db.query(DirectedReport).filter(DirectedReport.id == report_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    # Build compact report context
+    parts: list[str] = [
+        f"DIRECTED REPORT — Focus: {r.focus}",
+        f"Impact type: {r.impact_type or 'unknown'} | Confidence: {r.confidence_score or '—'}",
+    ]
+    if r.headline:
+        parts.append(f"Headline: {r.headline}")
+    if r.executive_summary:
+        parts.append(f"Executive Summary:\n{r.executive_summary}")
+    if r.key_developments:
+        parts.append("Key Developments:\n" + "\n".join(f"• {d}" for d in r.key_developments))
+    if r.economic_impact:
+        parts.append(f"Economic Impact:\n{r.economic_impact}")
+    if r.market_impact:
+        parts.append(f"Market Impact:\n{r.market_impact}")
+    if r.geopolitical_impact:
+        parts.append(f"Geopolitical Impact:\n{r.geopolitical_impact}")
+    if r.sector_impact:
+        sector_lines = "\n".join(f"  {k}: {v}" for k, v in r.sector_impact.items())
+        parts.append(f"Sector Impact:\n{sector_lines}")
+    if r.risk_assessment:
+        parts.append(f"Risks:\n{r.risk_assessment}")
+    if r.opportunities:
+        parts.append(f"Opportunities:\n{r.opportunities}")
+    if r.contrarian_views:
+        parts.append(f"Contrarian Views:\n{r.contrarian_views}")
+    if r.prognosis_short:
+        parts.append(f"Short-term Prognosis (1-6 mo):\n{r.prognosis_short}")
+    if r.prognosis_long:
+        parts.append(f"Long-term Prognosis (6-24 mo):\n{r.prognosis_long}")
+    if r.signals_to_watch:
+        parts.append("Signals to Watch:\n" + "\n".join(f"• {s}" for s in r.signals_to_watch))
+
+    report_context = "\n\n".join(parts)
+
+    system = (
+        "You are a senior economic and financial analyst assistant. "
+        "The user is asking follow-up questions about the specific research report shown below. "
+        "Answer primarily from the report content; when the question goes beyond the report, "
+        "draw on your broader knowledge but be explicit that you are doing so. "
+        "Be concise and direct — 2–5 sentences unless more detail is clearly needed.\n\n"
+        f"=== REPORT ===\n{report_context}"
+    )
+
+    history_lines = [f"{m.role.capitalize()}: {m.content}" for m in body.history[-12:]]
+    user_prompt = body.question
+    if history_lines:
+        user_prompt = "Conversation so far:\n" + "\n".join(history_lines) + f"\n\nQuestion: {body.question}"
+
+    try:
+        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+    except Exception as exc:
+        logger.error("Report ask failed for report %s: %s", report_id, exc)
+        raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+
+    return {"response": response_text}
 
 
 @router.get("/{analysis_id}", response_model=AnalysisOut)

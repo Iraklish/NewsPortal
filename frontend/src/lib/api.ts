@@ -431,6 +431,14 @@ export const analysisApi = {
     return request<void>(`/analysis/reports/${id}`, { method: 'DELETE' })
   },
 
+  askReport(id: number, question: string, history: Array<{ role: string; content: string }>) {
+    return request<{ response: string }>(`/analysis/reports/${id}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, history }),
+    })
+  },
+
   chat(req: { message: string; history?: { role: string; content: string }[]; use_web?: boolean; web_query?: string }) {
     return request<ChatResponse>('/analysis/chat', {
       method: 'POST',
