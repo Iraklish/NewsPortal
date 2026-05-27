@@ -63,6 +63,9 @@ export default function AnalysisPage() {
       .finally(() => setLoadingTopics(false))
   }, [])
 
+  const combinedFocus = focus.trim()
+    + (aspect.trim() ? ` — analyzed from the perspective of: ${aspect.trim()}` : '')
+
   // Debounced preview of matching DB articles for current focus + window
   useEffect(() => {
     const f = focus.trim()
@@ -76,9 +79,6 @@ export default function AnalysisPage() {
     }, 400)
     return () => clearTimeout(handle)
   }, [combinedFocus, timeWindowHours])
-
-  const combinedFocus = focus.trim()
-    + (aspect.trim() ? ` — analyzed from the perspective of: ${aspect.trim()}` : '')
 
   async function runReport() {
     if (!focus.trim()) return
