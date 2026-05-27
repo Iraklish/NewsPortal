@@ -879,8 +879,21 @@ async def full_web_search(query: str, num: int = 100) -> dict:
             seen.add(norm)
             merged.append(item)
 
+    # Sort by published_at descending; results without a date go last.
+    def _pub_key(item: dict):
+        pub = item.get("published_at")
+        if not pub:
+            return ""
+        return pub if isinstance(pub, str) else str(pub)
+
+    merged.sort(key=_pub_key, reverse=True)
+
+    # Sort per-engine lists the same way
+    for lst in (ddg_r, bing_r, goog_r, yahoo_r, sp_r):
+        lst.sort(key=_pub_key, reverse=True)
+
     return {
-        "results": merged[:num],
+        "results": merged,        # no count cap — return everything
         "total": len(merged),
         "engines": {
             "duckduckgo": len(ddg_r),

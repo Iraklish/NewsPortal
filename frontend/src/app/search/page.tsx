@@ -39,7 +39,6 @@ const FILTER_TABS: Array<{ key: Filter; label: string }> = [
 
 export default function SearchPage() {
   const [query, setQuery]         = useState('')
-  const [num, setNum]             = useState(100)
   const [loading, setLoading]     = useState(false)
   const [results, setResults]       = useState<WebSearchResult[]>([])
   const [perEngine, setPerEngine]   = useState<Record<string, WebSearchResult[]>>({})
@@ -63,7 +62,7 @@ export default function SearchPage() {
     setFilter('all')
     setImporting({})
     try {
-      const data = await searchApi.search(q, num)
+      const data = await searchApi.search(q, 200)
       if (data.error) setError(data.error)
       setResults(data.results)
       setEngines(data.engines as Engines)
@@ -108,7 +107,7 @@ export default function SearchPage() {
           Web Search
         </h1>
         <p className="text-slate-500 text-sm mt-1">
-          Runs DDG, Bing, Yahoo, Startpage &amp; Google simultaneously — up to {num} combined results.
+          Runs DDG, Bing, Yahoo, Startpage &amp; Google simultaneously — sorted newest first.
         </p>
       </div>
 
@@ -124,15 +123,6 @@ export default function SearchPage() {
             className="w-full bg-[#0d1117] border border-[#1e2433] rounded-lg pl-9 pr-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
-        <select
-          value={num}
-          onChange={e => setNum(Number(e.target.value))}
-          className="bg-[#0d1117] border border-[#1e2433] rounded-lg px-2 py-2.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500"
-        >
-          {[10, 20, 30, 50, 100].map(n => (
-            <option key={n} value={n}>Max {n}</option>
-          ))}
-        </select>
         <button
           type="submit"
           disabled={loading || !query.trim()}
@@ -218,7 +208,12 @@ export default function SearchPage() {
                         <span className="text-[10px] text-slate-500 truncate">{r.source}</span>
                       )}
                       {r.published_at && (
-                        <span className="text-[10px] text-slate-600">{r.published_at.slice(0, 10)}</span>
+                        <span className="text-[10px] text-indigo-400/70 font-medium flex-shrink-0">
+                          {new Date(r.published_at.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(r.published_at)
+                            ? r.published_at
+                            : r.published_at + 'Z'
+                          ).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+                        </span>
                       )}
                     </div>
                     <a

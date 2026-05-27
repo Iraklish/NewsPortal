@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 @router.get("")
 async def web_search(
     q: str = Query(..., min_length=1, description="Search query"),
-    num: int = Query(100, ge=1, le=200, description="Max total results (across all engines)"),
+    num: int = Query(200, ge=1, le=500, description="Fetch depth per engine (controls how many pages each engine scrapes)"),
 ):
     """Run DuckDuckGo Lite, Bing HTML, and Google HTML in parallel.
 
