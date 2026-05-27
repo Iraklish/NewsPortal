@@ -6,7 +6,7 @@ import ImpactBadge from '@/components/ImpactBadge'
 import {
   Sparkles, Loader2, ExternalLink, Trash2, AlertCircle, Globe, Database,
   TrendingUp, TrendingDown, Zap, ChevronRight, RefreshCw, Search,
-  MessageCircle, Send, ChevronDown, ChevronUp,
+  MessageCircle, Send, ChevronDown, ChevronUp, Maximize2, Minimize2,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -312,8 +312,13 @@ function Option({ label, on, onChange, hint, disabled }: { label: string; on: bo
 
 function ReportCard({ report, onDelete, expanded }: { report: DirectedReport; onDelete: () => void; expanded?: boolean }) {
   const [chatOpen, setChatOpen] = useState(false)
-  return (
-    <div className="bg-[#0d1117] border border-[#1e2433] rounded-xl p-6 mb-6">
+  const [maximized, setMaximized] = useState(false)
+
+  const inner = (
+    <div className={clsx(
+      'bg-[#0d1117] border border-[#1e2433]',
+      maximized ? 'w-full min-h-full p-6 overflow-y-auto' : 'rounded-xl p-6 mb-6',
+    )}>
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-4 pb-4 border-b border-[#1e2433]">
         <div className="flex-1 min-w-0">
@@ -336,9 +341,18 @@ function ReportCard({ report, onDelete, expanded }: { report: DirectedReport; on
             <span className="flex items-center gap-1"><Globe size={11} /> {report.web_result_count} web result{report.web_result_count !== 1 ? 's' : ''}</span>
           </div>
         </div>
-        <button onClick={onDelete} className="text-slate-600 hover:text-red-400 transition-colors flex-shrink-0">
-          <Trash2 size={14} />
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={() => setMaximized(m => !m)}
+            title={maximized ? 'Restore' : 'Maximize'}
+            className="p-1.5 text-slate-600 hover:text-white hover:bg-white/10 rounded transition-colors"
+          >
+            {maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
+          <button onClick={onDelete} className="p-1.5 text-slate-600 hover:text-red-400 transition-colors rounded">
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Executive summary */}
@@ -480,6 +494,12 @@ function ReportCard({ report, onDelete, expanded }: { report: DirectedReport; on
       )}
     </div>
   )
+
+  return maximized ? (
+    <div className="fixed inset-0 z-50 bg-black/80 overflow-y-auto" onClick={() => setMaximized(false)}>
+      <div onClick={e => e.stopPropagation()}>{inner}</div>
+    </div>
+  ) : inner
 }
 
 function Block({ title, accent, children }: { title: string; accent?: string; children: React.ReactNode }) {

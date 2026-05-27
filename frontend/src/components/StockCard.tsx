@@ -10,7 +10,8 @@ import {
 } from 'recharts'
 import { stocksApi, type StockAnalysis } from '@/lib/api'
 import ImpactBadge from './ImpactBadge'
-import { MessageCircle, Send, Sparkles, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
+import { MessageCircle, Send, Sparkles, Loader2, ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react'
+import clsx from 'clsx'
 
 function formatLargeNum(n: number | undefined): string {
   if (n === undefined || n === null) return '—'
@@ -41,6 +42,7 @@ function MetricItem({ label, value }: { label: string; value: React.ReactNode })
 
 export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
   const [chatOpen, setChatOpen] = useState(false)
+  const [maximized, setMaximized] = useState(false)
   const isPositive = (analysis.change_pct ?? 0) >= 0
   const chartColor = isPositive ? '#10b981' : '#ef4444'
   const chartData = (analysis.price_history ?? []).slice(-30).map(p => ({
@@ -54,8 +56,8 @@ export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
   const volume = snap['volume'] ?? snap['Volume'] ?? snap['regularMarketVolume']
   const pe = snap['PE'] ?? snap['peRatio'] ?? snap['trailingPE'] ?? snap['forwardPE']
 
-  return (
-    <div className="rounded-xl border border-[#1e2433] bg-[#0d1117] p-6 space-y-5">
+  const inner = (
+    <div className={clsx('rounded-xl border border-[#1e2433] bg-[#0d1117] p-6 space-y-5', maximized && 'rounded-none min-h-full')}>
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -70,22 +72,31 @@ export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
             {new Date(analysis.created_at.endsWith('Z') ? analysis.created_at : analysis.created_at + 'Z').toLocaleString()}
           </p>
         </div>
-        <div className="text-right">
-          {analysis.price !== undefined && (
-            <div className="text-3xl font-bold text-white">
-              ${analysis.price.toFixed(2)}
-            </div>
-          )}
-          {analysis.change_pct !== undefined && (
-            <div
-              className={`text-sm font-semibold mt-0.5 ${
-                isPositive ? 'text-emerald-400' : 'text-red-400'
-              }`}
-            >
-              {isPositive ? '+' : ''}
-              {analysis.change_pct.toFixed(2)}%
-            </div>
-          )}
+        <div className="flex items-start gap-2">
+          <div className="text-right">
+            {analysis.price !== undefined && (
+              <div className="text-3xl font-bold text-white">
+                ${analysis.price.toFixed(2)}
+              </div>
+            )}
+            {analysis.change_pct !== undefined && (
+              <div
+                className={`text-sm font-semibold mt-0.5 ${
+                  isPositive ? 'text-emerald-400' : 'text-red-400'
+                }`}
+              >
+                {isPositive ? '+' : ''}
+                {analysis.change_pct.toFixed(2)}%
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => setMaximized(m => !m)}
+            title={maximized ? 'Restore' : 'Maximize'}
+            className="p-1.5 text-slate-600 hover:text-white hover:bg-white/10 rounded transition-colors"
+          >
+            {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
         </div>
       </div>
 
@@ -253,6 +264,12 @@ export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
       </div>
     </div>
   )
+
+  return maximized ? (
+    <div className="fixed inset-0 z-50 bg-black/80 overflow-y-auto" onClick={() => setMaximized(false)}>
+      <div onClick={e => e.stopPropagation()}>{inner}</div>
+    </div>
+  ) : inner
 }
 
 // ── Inline follow-up chat ─────────────────────────────────────────────────────

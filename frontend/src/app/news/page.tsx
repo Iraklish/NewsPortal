@@ -12,7 +12,7 @@ import ImpactBadge from '@/components/ImpactBadge'
 import MessageContent from '@/components/MessageContent'
 import {
   RefreshCw, Search, X, ExternalLink, Loader2, Sparkles,
-  Send, ChevronDown, Clock, Plus, BookOpen, Globe,
+  Send, ChevronDown, Clock, Plus, BookOpen, Globe, Maximize2, Minimize2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import AddArticleModal from '@/components/AddArticleModal'
@@ -293,7 +293,7 @@ function ArticleCard({ article, onClick }: { article: Article; onClick: () => vo
         {article.summary && (
           <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{stripHtml(article.summary)}</p>
         )}
-        <p className="text-[10px] text-slate-600 mt-1.5">{fmtDate(article.published_at)}</p>
+        <p className="text-[10px] text-slate-600 mt-1.5">{fmtDate(article.published_at || article.fetched_at)}</p>
       </div>
     </button>
   )
@@ -315,6 +315,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [language, setLanguage] = useState<Lang>('English')
+  const [maximized, setMaximized] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // Load existing analyses for this article into the timeline.
@@ -404,9 +405,15 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
   const analyzeCount = timeline.filter(it => it.kind === 'analysis').length
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+    <div
+      className={clsx('fixed inset-0 z-50 bg-black/70 flex items-center justify-center', maximized ? 'p-0' : 'p-4')}
+      onClick={maximized ? undefined : onClose}
+    >
       <div
-        className="bg-[#0d1117] border border-[#1e2433] rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
+        className={clsx(
+          'bg-[#0d1117] border border-[#1e2433] overflow-hidden flex flex-col',
+          maximized ? 'w-full h-full' : 'rounded-2xl w-full max-w-4xl max-h-[90vh]',
+        )}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -418,7 +425,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
               )}
               <span className="text-xs text-slate-500">{article.source}</span>
               <span className="text-xs text-slate-600">·</span>
-              <span className="text-xs text-slate-500">{fmtDate(article.published_at)}</span>
+              <span className="text-xs text-slate-500">{fmtDate(article.published_at || article.fetched_at)}</span>
               <a
                 href={article.url}
                 target="_blank"
@@ -435,9 +442,18 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
             </div>
             <h2 className="text-lg font-bold text-white leading-snug">{article.title}</h2>
           </div>
-          <button onClick={onClose} className="p-1.5 text-slate-500 hover:text-white hover:bg-white/10 rounded transition-colors flex-shrink-0">
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={() => setMaximized(m => !m)}
+              title={maximized ? 'Restore' : 'Maximize'}
+              className="p-1.5 text-slate-500 hover:text-white hover:bg-white/10 rounded transition-colors"
+            >
+              {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+            <button onClick={onClose} className="p-1.5 text-slate-500 hover:text-white hover:bg-white/10 rounded transition-colors">
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
