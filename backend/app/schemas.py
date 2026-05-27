@@ -20,6 +20,7 @@ class ArticleOut(BaseModel):
     author: Optional[str] = None
     image_url: Optional[str] = None
     is_analyzed: bool = False
+    tags: Optional[List[str]] = None
 
     class Config:
         from_attributes = True
@@ -268,6 +269,7 @@ class DirectedAnalysisRequest(BaseModel):
 class DirectedReportRequest(BaseModel):
     focus: str
     category: Optional[str] = None    # if set, filter DB articles to this category only
+    tag: Optional[str] = None         # if set, filter DB articles to those carrying this tag
     include_web: bool = True          # AI-native grounding (Gemini / Anthropic)
     include_web_search: bool = False  # Explicit multi-engine search (Google/DDG/Bing)
     time_window_hours: int = 24  # default: last 24h. Presets: 24, 48, 168 (1w), 336 (2w), 720 (1m)

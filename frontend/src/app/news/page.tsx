@@ -68,6 +68,8 @@ export default function NewsPage() {
   const [articles, setArticles] = useState<Article[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [category, setCategory] = useState<string>('')
+  const [allTags, setAllTags] = useState<string[]>([])
+  const [tag, setTag] = useState<string>('')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -79,18 +81,23 @@ export default function NewsPage() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  function reloadTags() {
+    articlesApi.tags().then(setAllTags).catch(() => {})
+  }
+
   async function loadStatus() {
     try { setStatus(await sourcesApi.status()) } catch {}
   }
 
-  async function load(params?: { category?: string; q?: string }) {
+  async function load(params?: { category?: string; q?: string; tag?: string }) {
     setLoading(true)
     const effCategory = params?.category ?? category
     const effQuery = params?.q ?? query
+    const effTag = params?.tag !== undefined ? params.tag : tag
     try {
       const [data, countRes] = await Promise.all([
-        articlesApi.list({ limit: 100, category: effCategory, q: effQuery }),
-        articlesApi.count({ category: effCategory, q: effQuery }),
+        articlesApi.list({ limit: 100, category: effCategory, q: effQuery, tag: effTag }),
+        articlesApi.count({ category: effCategory, q: effQuery, tag: effTag }),
       ])
       setArticles(data)
       setTotalCount(countRes.count)
@@ -101,6 +108,7 @@ export default function NewsPage() {
 
   useEffect(() => {
     articlesApi.categories().then(setCategories).catch(() => {})
+    reloadTags()
     load()
     loadStatus()
     const id = setInterval(loadStatus, 30000)  // refresh every 30s
@@ -115,7 +123,12 @@ export default function NewsPage() {
 
   function pickCategory(c: string) {
     setCategory(c)
-    load({ category: c, q: query })
+    load({ category: c, q: query, tag })
+  }
+
+  function pickTag(t: string) {
+    setTag(t)
+    load({ tag: t, category, q: query })
   }
 
   async function refreshFeeds() {
@@ -207,8 +220,8 @@ export default function NewsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-3 mb-4">
-        <div className="relative flex-1">
+      <div className="flex gap-3 mb-4 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             value={query}
@@ -224,6 +237,15 @@ export default function NewsPage() {
         >
           <option value="">All Categories</option>
           {categories.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select
+          value={tag}
+          onChange={e => pickTag(e.target.value)}
+          className="bg-[#0d1117] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-teal-500"
+          title="Filter by topic tag"
+        >
+          <option value="">All Tags</option>
+          {allTags.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
 
@@ -293,9 +315,109 @@ function ArticleCard({ article, onClick }: { article: Article; onClick: () => vo
         {article.summary && (
           <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{stripHtml(article.summary)}</p>
         )}
+        {article.tags && article.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            {article.tags.slice(0, 4).map(t => (
+              <span key={t} className="text-[9px] px-1.5 py-0 bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded-full leading-5">{t}</span>
+            ))}
+            {article.tags.length > 4 && <span className="text-[9px] text-slate-600 leading-5">+{article.tags.length - 4}</span>}
+          </div>
+        )}
         <p className="text-[10px] text-slate-600 mt-1.5">{fmtDate(article.published_at || article.fetched_at)}</p>
       </div>
     </button>
+  )
+}
+
+// ── Tags editor ───────────────────────────────────────────────────────────────
+
+function TagsEditor({
+  articleId,
+  initialTags,
+  onTagsChanged,
+}: {
+  articleId: number
+  initialTags?: string[]
+  onTagsChanged?: (tags: string[]) => void
+}) {
+  const [tags, setTags] = useState<string[]>(initialTags || [])
+  const [inputVal, setInputVal] = useState('')
+  const [autoTagging, setAutoTagging] = useState(false)
+
+  async function saveTags(newTags: string[]) {
+    setTags(newTags)
+    onTagsChanged?.(newTags)
+    try { await articlesApi.setTags(articleId, newTags) } catch {}
+  }
+
+  function addTag() {
+    const t = inputVal.trim()
+    if (!t || tags.includes(t)) return
+    setInputVal('')
+    saveTags([...tags, t])
+  }
+
+  async function autoTag() {
+    setAutoTagging(true)
+    try {
+      const res = await articlesApi.autoTag(articleId)
+      setTags(res.tags)
+      onTagsChanged?.(res.tags)
+    } catch {}
+    finally { setAutoTagging(false) }
+  }
+
+  return (
+    <div className="bg-[#0a0f1e] rounded-lg p-3 border border-[#1e2433]">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[10px] font-bold text-teal-500 uppercase tracking-wider flex-1">Topic Tags</span>
+        <button
+          onClick={autoTag}
+          disabled={autoTagging}
+          title="Auto-extract English tags using AI (works for any language)"
+          className="flex items-center gap-1 text-[10px] px-2 py-0.5 bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded hover:bg-teal-500/20 transition-colors disabled:opacity-50"
+        >
+          {autoTagging ? <Loader2 size={9} className="animate-spin" /> : <Sparkles size={9} />}
+          Auto-tag
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 mb-2 min-h-[22px]">
+        {tags.length === 0 && (
+          <span className="text-[10px] text-slate-600 italic">No tags yet — add manually or click Auto-tag</span>
+        )}
+        {tags.map(t => (
+          <span
+            key={t}
+            className="flex items-center gap-1 text-[10px] px-2 py-0.5 bg-teal-500/10 text-teal-300 border border-teal-500/20 rounded-full"
+          >
+            {t}
+            <button
+              onClick={() => saveTags(tags.filter(x => x !== t))}
+              className="text-teal-500 hover:text-teal-200 ml-0.5 leading-none"
+              title={`Remove tag "${t}"`}
+            >×</button>
+          </span>
+        ))}
+      </div>
+
+      <div className="flex gap-1.5">
+        <input
+          value={inputVal}
+          onChange={e => setInputVal(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
+          placeholder="Add a tag…"
+          className="flex-1 bg-[#0d1117] border border-[#1e2433] rounded px-2 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-teal-500/50 transition-colors"
+        />
+        <button
+          onClick={addTag}
+          disabled={!inputVal.trim()}
+          className="px-2.5 py-1 text-[11px] bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 rounded border border-teal-500/20 disabled:opacity-40 transition-colors"
+        >
+          Add
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -467,6 +589,9 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
               </p>
             </div>
           )}
+
+          {/* Tags editor */}
+          <TagsEditor articleId={article.id} initialTags={article.tags} />
 
           {/* Unified timeline */}
           <div className="space-y-2.5">

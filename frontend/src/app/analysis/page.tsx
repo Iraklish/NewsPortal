@@ -35,6 +35,8 @@ export default function AnalysisPage() {
   const [aspect, setAspect] = useState('')
   const [category, setCategory] = useState('')
   const [categories, setCategories] = useState<string[]>([])
+  const [tag, setTag] = useState('')
+  const [allTags, setAllTags] = useState<string[]>([])
   const [includeWeb, setIncludeWeb] = useState(false)
   const [includeWebSearch, setIncludeWebSearch] = useState(false)
   const [timeWindowHours, setTimeWindowHours] = useState(2)
@@ -67,6 +69,9 @@ export default function AnalysisPage() {
     articlesApi.categories()
       .then(cats => setCategories(cats))
       .catch(() => {})
+    articlesApi.tags()
+      .then(ts => setAllTags(ts))
+      .catch(() => {})
   }, [])
 
   const combinedFocus = focus.trim()
@@ -78,13 +83,13 @@ export default function AnalysisPage() {
     if (!f) { setPreviewCount(null); return }
     setPreviewLoading(true)
     const handle = setTimeout(() => {
-      analysisApi.previewDirected(combinedFocus, timeWindowHours, category || undefined)
+      analysisApi.previewDirected(combinedFocus, timeWindowHours, category || undefined, tag || undefined)
         .then(r => setPreviewCount(r.db_article_count))
         .catch(() => setPreviewCount(null))
         .finally(() => setPreviewLoading(false))
     }, 400)
     return () => clearTimeout(handle)
-  }, [combinedFocus, timeWindowHours, category])
+  }, [combinedFocus, timeWindowHours, category, tag])
 
   async function runReport() {
     if (!focus.trim()) return
@@ -95,6 +100,7 @@ export default function AnalysisPage() {
       const report = await analysisApi.runDirectedReport({
         focus: combinedFocus,
         category: category || undefined,
+        tag: tag || undefined,
         include_web: includeWeb,
         include_web_search: includeWebSearch,
         time_window_hours: timeWindowHours,
@@ -177,7 +183,7 @@ export default function AnalysisPage() {
           />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">
           <label className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-500 uppercase tracking-wider">Category</span>
             <select
@@ -188,6 +194,19 @@ export default function AnalysisPage() {
               <option value="">All categories</option>
               {categories.map(c => (
                 <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-teal-500 uppercase tracking-wider">Topic tag</span>
+            <select
+              value={tag}
+              onChange={e => setTag(e.target.value)}
+              className="bg-[#0a0f1e] border border-[#1e2433] rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-teal-500"
+            >
+              <option value="">All tags</option>
+              {allTags.map(t => (
+                <option key={t} value={t}>{t}</option>
               ))}
             </select>
           </label>

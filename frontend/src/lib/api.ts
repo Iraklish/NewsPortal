@@ -45,6 +45,7 @@ export interface Article {
   author?: string
   image_url?: string
   is_analyzed: boolean
+  tags?: string[]
 }
 
 export type ImpactType = 'highly_positive' | 'positive' | 'neutral' | 'negative' | 'highly_negative'
@@ -74,6 +75,7 @@ export interface Analysis {
 export interface DirectedReportRequest {
   focus: string
   category?: string
+  tag?: string
   include_web?: boolean
   include_web_search?: boolean
   time_window_hours?: number
@@ -285,12 +287,13 @@ export const articlesApi = {
     })
   },
 
-  list(params?: { skip?: number; limit?: number; category?: string; q?: string }) {
+  list(params?: { skip?: number; limit?: number; category?: string; q?: string; tag?: string }) {
     const qp = new URLSearchParams()
     if (params?.skip !== undefined) qp.set('skip', String(params.skip))
     if (params?.limit !== undefined) qp.set('limit', String(params.limit))
     if (params?.category) qp.set('category', params.category)
     if (params?.q) qp.set('q', params.q)
+    if (params?.tag) qp.set('tag', params.tag)
     const qs = qp.toString()
     return request<Article[]>(`/articles${qs ? '?' + qs : ''}`)
   },
@@ -299,10 +302,15 @@ export const articlesApi = {
     return request<string[]>('/articles/categories')
   },
 
-  count(params?: { category?: string; q?: string }) {
+  tags() {
+    return request<string[]>('/articles/tags')
+  },
+
+  count(params?: { category?: string; q?: string; tag?: string }) {
     const qp = new URLSearchParams()
     if (params?.category) qp.set('category', params.category)
     if (params?.q) qp.set('q', params.q)
+    if (params?.tag) qp.set('tag', params.tag)
     const qs = qp.toString()
     return request<{ count: number }>(`/articles/count${qs ? '?' + qs : ''}`)
   },
@@ -383,6 +391,25 @@ export const articlesApi = {
     const qs = qp.toString()
     return request<{ topics: string[] }>(`/articles/trending-topics${qs ? '?' + qs : ''}`)
   },
+
+  setTags(id: number, tags: string[]) {
+    return request<{ id: number; tags: string[] }>(`/articles/${id}/tags`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags }),
+    })
+  },
+
+  autoTag(id: number) {
+    return request<{ id: number; tags: string[] }>(`/articles/${id}/auto-tag`, { method: 'POST' })
+  },
+
+  bulkAutoTag(limit = 50) {
+    return request<{ tagged: number; errors: number; total: number }>(
+      `/articles/bulk-auto-tag?limit=${limit}`,
+      { method: 'POST' },
+    )
+  },
 }
 
 // ─── Analysis ─────────────────────────────────────────────────────────────────
@@ -417,9 +444,10 @@ export const analysisApi = {
     return request<Analysis[]>(`/analysis?article_id=${articleId}`)
   },
 
-  previewDirected(focus: string, time_window_hours: number, category?: string) {
+  previewDirected(focus: string, time_window_hours: number, category?: string, tag?: string) {
     const qs = new URLSearchParams({ focus, time_window_hours: String(time_window_hours) })
     if (category) qs.set('category', category)
+    if (tag) qs.set('tag', tag)
     return request<{ db_article_count: number }>(`/analysis/directed/preview?${qs}`)
   },
 

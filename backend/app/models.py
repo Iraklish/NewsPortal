@@ -24,6 +24,7 @@ class Article(Base):
     author = Column(String(256))
     image_url = Column(String(2048))
     is_analyzed = Column(Boolean, default=False)
+    tags = Column(JSON, default=list)   # list[str] — language-agnostic English topic tags
 
 
 class Analysis(Base):

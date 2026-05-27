@@ -1,6 +1,8 @@
 import hashlib
 import io
+import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
@@ -8,7 +10,7 @@ from urllib.parse import urlparse
 import feedparser
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -90,12 +92,17 @@ def list_categories(db: Session = Depends(get_db)):
 def count_articles(
     category: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     """Total article count for the given filters (independent of paging)."""
     query = db.query(Article.id)
     if category:
         query = query.filter(Article.category == category)
+    if tag:
+        query = query.filter(
+            text("EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE value = :tv)").bindparams(tv=tag)
+        )
     if q:
         query = query.filter(
             or_(
@@ -113,11 +120,16 @@ def list_articles(
     limit: int = Query(50, ge=1, le=200),
     category: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     query = db.query(Article)
     if category:
         query = query.filter(Article.category == category)
+    if tag:
+        query = query.filter(
+            text("EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE value = :tv)").bindparams(tv=tag)
+        )
     if q:
         query = query.filter(
             or_(
@@ -235,6 +247,107 @@ def trending_topics(
                 break
 
     return {"topics": selected}
+
+
+@router.get("/tags")
+def list_tags(db: Session = Depends(get_db)):
+    """Return all distinct tags that exist across all articles, sorted alphabetically."""
+    rows = db.query(Article.tags).filter(Article.tags.isnot(None)).all()
+    all_tags: set[str] = set()
+    for (raw,) in rows:
+        if isinstance(raw, list):
+            all_tags.update(str(t).strip() for t in raw if str(t).strip())
+        elif isinstance(raw, str) and raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    all_tags.update(str(t).strip() for t in parsed if str(t).strip())
+            except Exception:
+                pass
+    return sorted(all_tags)
+
+
+class TagsIn(BaseModel):
+    tags: list[str]
+
+
+@router.patch("/{article_id}/tags")
+def set_article_tags(article_id: int, body: TagsIn, db: Session = Depends(get_db)):
+    """Replace the tag list on an article."""
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    article.tags = [t.strip() for t in body.tags if t.strip()]
+    db.commit()
+    db.refresh(article)
+    return {"id": article.id, "tags": article.tags}
+
+
+@router.post("/{article_id}/auto-tag")
+async def auto_tag_article(article_id: int, db: Session = Depends(get_db)):
+    """Use AI to extract normalized English topic tags from the article (any source language)."""
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    tags = await _ai_extract_tags(article, db)
+    article.tags = tags
+    db.commit()
+    db.refresh(article)
+    return {"id": article.id, "tags": article.tags}
+
+
+@router.post("/bulk-auto-tag")
+async def bulk_auto_tag(
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """Auto-tag up to `limit` articles that currently have no tags, newest first."""
+    articles = (
+        db.query(Article)
+        .filter(
+            or_(
+                Article.tags.is_(None),
+                Article.tags.cast(type_=Article.tags.type) == [],
+                Article.tags == "[]",
+            )
+        )
+        .order_by(Article.fetched_at.desc())
+        .limit(limit)
+        .all()
+    )
+    tagged = errors = 0
+    for art in articles:
+        try:
+            art.tags = await _ai_extract_tags(art, db)
+            db.commit()
+            tagged += 1
+        except Exception:
+            errors += 1
+    return {"tagged": tagged, "errors": errors, "total": len(articles)}
+
+
+async def _ai_extract_tags(article: Article, db) -> list[str]:
+    """Call AI to extract 3-7 English topic tags regardless of article language."""
+    from ..services.ai_client import call_ai
+    title = article.title or "(no title)"
+    excerpt = (article.content or article.summary or "")[:1000]
+    system = (
+        "You are a multilingual topic-tagging assistant. Extract canonical English topic tags "
+        "from news articles. The article may be in ANY language — always return tags in English. "
+        "Tags must be concise noun phrases (2-5 words). Return ONLY a valid JSON array of strings, "
+        "nothing else. Example: [\"ceasefire negotiations\", \"Middle East diplomacy\", \"US foreign policy\"]"
+    )
+    user = f"Title: {title}\n\nText excerpt:\n{excerpt}\n\nReturn 3-7 English topic tags as a JSON array:"
+    try:
+        raw = await call_ai(system=system, user=user, max_tokens=250, db=db)
+        cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+        s, e = cleaned.find("["), cleaned.rfind("]")
+        if s == -1 or e == -1:
+            return []
+        tags = json.loads(cleaned[s : e + 1])
+        return [str(t).strip() for t in tags if str(t).strip()][:10]
+    except Exception:
+        return []
 
 
 @router.get("/{article_id}", response_model=ArticleOut)

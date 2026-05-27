@@ -10,7 +10,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from ..models import AppSettings, Article, DirectedReport
@@ -23,11 +23,19 @@ _IMPACT_LEVELS = {"highly_positive", "positive", "neutral", "negative", "highly_
 
 # ── Context gathering ────────────────────────────────────────────────────────
 
-def _gather_db_articles(focus: str, db: Session, hours: int, hard_cap: int = 200, category: str | None = None) -> list[Article]:
+def _gather_db_articles(
+    focus: str,
+    db: Session,
+    hours: int,
+    hard_cap: int = 200,
+    category: str | None = None,
+    tag: str | None = None,
+) -> list[Article]:
     """Match articles by any focus keyword within the last `hours`, sorted by recency.
 
     `hard_cap` is a safety ceiling so a wildly popular topic doesn't blow the prompt.
     When `category` is provided only articles in that category are returned.
+    When `tag` is provided only articles carrying that tag are returned.
     """
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
     keywords = [kw.strip() for kw in focus.split() if len(kw.strip()) > 2]
@@ -41,6 +49,10 @@ def _gather_db_articles(focus: str, db: Session, hours: int, hard_cap: int = 200
     )
     if category:
         query = query.filter(Article.category == category)
+    if tag:
+        query = query.filter(
+            text("EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE value = :tv)").bindparams(tv=tag)
+        )
     if keywords:
         conditions = []
         for kw in keywords:
@@ -55,10 +67,17 @@ def _gather_db_articles(focus: str, db: Session, hours: int, hard_cap: int = 200
     )
 
 
-def count_db_articles(focus: str, db: Session, hours: int, category: str | None = None) -> int:
+def count_db_articles(
+    focus: str,
+    db: Session,
+    hours: int,
+    category: str | None = None,
+    tag: str | None = None,
+) -> int:
     """Lightweight count of DB articles matching focus in window (no row fetch).
 
     When `category` is provided only articles in that category are counted.
+    When `tag` is provided only articles carrying that tag are counted.
     """
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
     keywords = [kw.strip() for kw in focus.split() if len(kw.strip()) > 2]
@@ -70,6 +89,10 @@ def count_db_articles(focus: str, db: Session, hours: int, category: str | None 
     )
     if category:
         query = query.filter(Article.category == category)
+    if tag:
+        query = query.filter(
+            text("EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE value = :tv)").bindparams(tv=tag)
+        )
     if keywords:
         conditions = []
         for kw in keywords:
@@ -182,6 +205,7 @@ async def run_directed_report(
     focus: str,
     db: Session,
     category: str | None = None,        # if set, restrict DB articles to this category
+    tag: str | None = None,             # if set, restrict DB articles to those carrying this tag
     include_web: bool = True,
     include_web_search: bool = False,   # explicit multi-engine search (Google/DDG/Bing)
     time_window_hours: int = 24,
@@ -206,7 +230,7 @@ async def run_directed_report(
     _dr_prompt_row = db.query(AppSettings).filter(AppSettings.key == "directed_report_system_prompt").first()
     _custom_system_prompt = (_dr_prompt_row.value or "").strip() if _dr_prompt_row else ""
 
-    db_articles = _gather_db_articles(focus, db, time_window_hours, category=category)
+    db_articles = _gather_db_articles(focus, db, time_window_hours, category=category, tag=tag)
     if not db_articles and not include_web and not include_web_search:
         raise ValueError("No DB articles match this focus in the chosen window; enable web grounding or web search, or widen the window")
 

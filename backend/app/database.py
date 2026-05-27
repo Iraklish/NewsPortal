@@ -14,6 +14,8 @@ _COLUMN_MIGRATIONS = [
     ("analyses", "model_used", "VARCHAR(128)"),
     ("analyses", "summary", "TEXT"),
     ("analyses", "impact_type", "VARCHAR(16)"),
+    # tags: stored as JSON (TEXT in SQLite) — language-agnostic English topic labels
+    ("articles", "tags", "TEXT DEFAULT '[]'"),
 ]
 
 
