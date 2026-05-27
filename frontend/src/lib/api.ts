@@ -364,6 +364,17 @@ export const articlesApi = {
     })
   },
 
+  importUrls(urls: string[], category = 'web_search') {
+    return request<{ results: Array<{ url: string; status: string; article_id?: number; reason?: string }> }>(
+      '/articles/import',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls, category }),
+      },
+    )
+  },
+
   trendingTopics(params?: { limit?: number; hours?: number }) {
     const qp = new URLSearchParams()
     if (params?.limit !== undefined) qp.set('limit', String(params.limit))
@@ -695,6 +706,30 @@ export const stocksApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question, history }),
     })
+  },
+}
+
+// ─── Web Search ──────────────────────────────────────────────────────────────
+
+export interface WebSearchResult {
+  title: string
+  url: string
+  snippet?: string
+  source?: string
+  published_at?: string
+  engine: 'duckduckgo' | 'bing' | 'google' | 'google_cse' | string
+}
+
+export interface WebSearchResponse {
+  results: WebSearchResult[]
+  total: number
+  engines: { duckduckgo: number; bing: number; google: number }
+  error?: string
+}
+
+export const searchApi = {
+  search(q: string, num = 50) {
+    return request<WebSearchResponse>(`/search?q=${encodeURIComponent(q)}&num=${num}`)
   },
 }
 

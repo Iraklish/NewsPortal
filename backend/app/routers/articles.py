@@ -480,6 +480,64 @@ async def add_from_document(
     )
 
 
+# ── Bulk URL import ──────────────────────────────────────────────────────────
+
+class ImportUrlsIn(BaseModel):
+    urls: list[str]
+    category: str = "web_search"
+
+
+@router.post("/import")
+async def import_urls(body: ImportUrlsIn, db: Session = Depends(get_db)):
+    """Fetch and import a batch of URLs. Returns per-URL status."""
+    results = []
+    for url in body.urls[:50]:  # hard cap at 50
+        url = url.strip()
+        if not url:
+            continue
+        try:
+            fetched = await fetch_url(url)
+        except Exception as exc:
+            results.append({"url": url, "status": "error", "reason": f"Fetch failed: {exc}"})
+            continue
+
+        if fetched.get("status") != "ok" or not (fetched.get("content") or "").strip():
+            results.append({"url": url, "status": "error", "reason": fetched.get("error") or "No usable content"})
+            continue
+
+        pub_raw = fetched.get("published_at")
+        pub_dt: Optional[datetime] = None
+        if isinstance(pub_raw, datetime):
+            pub_dt = pub_raw
+        elif isinstance(pub_raw, str) and pub_raw.strip():
+            try:
+                pub_dt = datetime.fromisoformat(pub_raw.replace("Z", "+00:00"))
+                if pub_dt.tzinfo is not None:
+                    pub_dt = pub_dt.replace(tzinfo=None)
+            except ValueError:
+                pub_dt = None
+
+        try:
+            article = _insert_article(
+                db,
+                title=fetched.get("title"),
+                content=fetched["content"],
+                summary=fetched.get("description") or fetched.get("summary"),
+                source=fetched.get("source") or urlparse(url).netloc.replace("www.", ""),
+                category=body.category,
+                url=url,
+                author=fetched.get("author"),
+                published_at=pub_dt,
+                image_url=fetched.get("image_url"),
+            )
+            results.append({"url": url, "status": "ok", "article_id": article.id})
+        except HTTPException as exc:
+            status = "duplicate" if exc.status_code == 409 else "error"
+            results.append({"url": url, "status": status, "reason": exc.detail})
+
+    return {"results": results}
+
+
 # ── Background fetch trigger ─────────────────────────────────────────────────
 
 @router.post("/fetch-all")

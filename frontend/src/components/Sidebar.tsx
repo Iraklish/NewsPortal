@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart2, LineChart, Network, Settings, MessageSquare, Newspaper, FileText, Menu, X, Send } from 'lucide-react'
+import { BarChart2, LineChart, Network, Settings, MessageSquare, Newspaper, FileText, Menu, X, Send, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import AIChatPanel from './AIChatPanel'
 
@@ -9,6 +9,7 @@ const nav = [
   { href: '/news', label: 'News', icon: Newspaper },
   { href: '/analysis', label: 'Analysis & Prognosis', icon: BarChart2 },
   { href: '/stocks', label: 'Stock Reviews', icon: LineChart },
+  { href: '/search', label: 'Web Search', icon: Search },
   { href: '/mindmap', label: 'MindMap', icon: Network },
   { href: '/telegram', label: 'Telegram', icon: Send },
   { href: '/logs', label: 'Logs', icon: FileText },
