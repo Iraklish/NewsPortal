@@ -92,6 +92,29 @@ def _clear_pid() -> None:
         pass
 
 
+def _pid_alive(pid: int) -> bool:
+    """Cross-platform process-existence check.
+
+    POSIX: os.kill(pid, 0) — raises ProcessLookupError when gone.
+    Windows: os.kill(pid, 0) raises OSError(WinError 11) regardless of whether
+             the process exists, so we open a process handle via ctypes instead.
+    """
+    if sys.platform == "win32":
+        import ctypes
+        # OpenProcess with SYNCHRONIZE (0x100000) — returns NULL if PID not found.
+        handle = ctypes.windll.kernel32.OpenProcess(0x100000, False, pid)
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        return False
+    # POSIX
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
 def _kill_existing_launcher() -> None:
     """If another launcher is already running, send it SIGTERM and wait briefly."""
     if not _PID_FILE.exists():
@@ -103,16 +126,16 @@ def _kill_existing_launcher() -> None:
         return
     if old_pid == os.getpid():
         return  # That's us somehow
+    if not _pid_alive(old_pid):
+        _clear_pid()
+        return
     try:
-        os.kill(old_pid, 0)   # signal 0 = existence check only
         logger.warning("[launcher] existing launcher PID=%d found — sending SIGTERM", old_pid)
         os.kill(old_pid, signal.SIGTERM)
         # Give it up to 5 s to exit before we take over
         for _ in range(50):
             time.sleep(0.1)
-            try:
-                os.kill(old_pid, 0)
-            except (ProcessLookupError, PermissionError):
+            if not _pid_alive(old_pid):
                 break
     except (ProcessLookupError, PermissionError):
         pass  # Already dead
