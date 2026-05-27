@@ -5,7 +5,7 @@ import { stocksApi, type StockAnalysis } from '@/lib/api'
 import StockCard from '@/components/StockCard'
 import { Search, Loader2, TrendingUp } from 'lucide-react'
 
-const QUICK_TICKERS = ['AAPL', 'TSLA', 'NVDA', 'SPY', 'BTC-USD', 'MSFT', 'AMZN']
+const QUICK_TICKERS = ['AAPL', 'TSLA', 'NVDA', 'SPY', 'BTC-USD', 'MSFT', 'AMZN', 'ILS=X', 'WIX', 'VST', 'MSTU', 'TWLO']
 
 export default function StocksPage() {
   const [query, setQuery] = useState('')
