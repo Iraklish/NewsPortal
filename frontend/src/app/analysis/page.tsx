@@ -31,9 +31,10 @@ const TIME_WINDOWS: { label: string; hours: number }[] = [
 
 export default function AnalysisPage() {
   const [focus, setFocus] = useState('')
+  const [aspect, setAspect] = useState('')
   const [includeWeb, setIncludeWeb] = useState(false)
   const [includeWebSearch, setIncludeWebSearch] = useState(false)
-  const [timeWindowHours, setTimeWindowHours] = useState(24)
+  const [timeWindowHours, setTimeWindowHours] = useState(2)
 
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
@@ -68,13 +69,16 @@ export default function AnalysisPage() {
     if (!f) { setPreviewCount(null); return }
     setPreviewLoading(true)
     const handle = setTimeout(() => {
-      analysisApi.previewDirected(f, timeWindowHours)
+      analysisApi.previewDirected(combinedFocus, timeWindowHours)
         .then(r => setPreviewCount(r.db_article_count))
         .catch(() => setPreviewCount(null))
         .finally(() => setPreviewLoading(false))
     }, 400)
     return () => clearTimeout(handle)
-  }, [focus, timeWindowHours])
+  }, [combinedFocus, timeWindowHours])
+
+  const combinedFocus = focus.trim()
+    + (aspect.trim() ? ` — analyzed from the perspective of: ${aspect.trim()}` : '')
 
   async function runReport() {
     if (!focus.trim()) return
@@ -83,7 +87,7 @@ export default function AnalysisPage() {
     setCurrent(null)
     try {
       const report = await analysisApi.runDirectedReport({
-        focus: focus.trim(),
+        focus: combinedFocus,
         include_web: includeWeb,
         include_web_search: includeWebSearch,
         time_window_hours: timeWindowHours,
@@ -150,6 +154,20 @@ export default function AnalysisPage() {
           ) : (
             <span className="text-[10px] text-slate-600 italic">No trending topics yet — fetch some news first.</span>
           )}
+        </div>
+
+        {/* Aspect */}
+        <div className="mt-3">
+          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+            Aspect <span className="normal-case font-normal text-slate-600">(optional — analyze from the perspective of…)</span>
+          </label>
+          <input
+            value={aspect}
+            onChange={e => setAspect(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runReport() }}
+            placeholder="e.g. Israeli economy, emerging markets, energy sector, tech stocks…"
+            className="w-full bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+          />
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4">
