@@ -73,6 +73,7 @@ export interface Analysis {
 
 export interface DirectedReportRequest {
   focus: string
+  category?: string
   include_web?: boolean
   include_web_search?: boolean
   time_window_hours?: number
@@ -416,8 +417,9 @@ export const analysisApi = {
     return request<Analysis[]>(`/analysis?article_id=${articleId}`)
   },
 
-  previewDirected(focus: string, time_window_hours: number) {
+  previewDirected(focus: string, time_window_hours: number, category?: string) {
     const qs = new URLSearchParams({ focus, time_window_hours: String(time_window_hours) })
+    if (category) qs.set('category', category)
     return request<{ db_article_count: number }>(`/analysis/directed/preview?${qs}`)
   },
 

@@ -33,6 +33,8 @@ const TIME_WINDOWS: { label: string; hours: number }[] = [
 export default function AnalysisPage() {
   const [focus, setFocus] = useState('')
   const [aspect, setAspect] = useState('')
+  const [category, setCategory] = useState('')
+  const [categories, setCategories] = useState<string[]>([])
   const [includeWeb, setIncludeWeb] = useState(false)
   const [includeWebSearch, setIncludeWebSearch] = useState(false)
   const [timeWindowHours, setTimeWindowHours] = useState(2)
@@ -62,24 +64,27 @@ export default function AnalysisPage() {
       .then(r => setTrendingTopics(r.topics))
       .catch(() => {})
       .finally(() => setLoadingTopics(false))
+    articlesApi.categories()
+      .then(cats => setCategories(cats))
+      .catch(() => {})
   }, [])
 
   const combinedFocus = focus.trim()
     + (aspect.trim() ? ` — analyzed from the perspective of: ${aspect.trim()}` : '')
 
-  // Debounced preview of matching DB articles for current focus + window
+  // Debounced preview of matching DB articles for current focus + window + category
   useEffect(() => {
     const f = focus.trim()
     if (!f) { setPreviewCount(null); return }
     setPreviewLoading(true)
     const handle = setTimeout(() => {
-      analysisApi.previewDirected(combinedFocus, timeWindowHours)
+      analysisApi.previewDirected(combinedFocus, timeWindowHours, category || undefined)
         .then(r => setPreviewCount(r.db_article_count))
         .catch(() => setPreviewCount(null))
         .finally(() => setPreviewLoading(false))
     }, 400)
     return () => clearTimeout(handle)
-  }, [combinedFocus, timeWindowHours])
+  }, [combinedFocus, timeWindowHours, category])
 
   async function runReport() {
     if (!focus.trim()) return
@@ -89,6 +94,7 @@ export default function AnalysisPage() {
     try {
       const report = await analysisApi.runDirectedReport({
         focus: combinedFocus,
+        category: category || undefined,
         include_web: includeWeb,
         include_web_search: includeWebSearch,
         time_window_hours: timeWindowHours,
@@ -171,7 +177,20 @@ export default function AnalysisPage() {
           />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Category</span>
+            <select
+              value={category}
+              onChange={e => setCategory(e.target.value)}
+              className="bg-[#0a0f1e] border border-[#1e2433] rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+            >
+              <option value="">All categories</option>
+              {categories.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-500 uppercase tracking-wider">Time window</span>
             <select

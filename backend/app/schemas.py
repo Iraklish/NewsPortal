@@ -267,6 +267,7 @@ class DirectedAnalysisRequest(BaseModel):
 
 class DirectedReportRequest(BaseModel):
     focus: str
+    category: Optional[str] = None    # if set, filter DB articles to this category only
     include_web: bool = True          # AI-native grounding (Gemini / Anthropic)
     include_web_search: bool = False  # Explicit multi-engine search (Google/DDG/Bing)
     time_window_hours: int = 24  # default: last 24h. Presets: 24, 48, 168 (1w), 336 (2w), 720 (1m)

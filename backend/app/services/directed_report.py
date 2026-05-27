@@ -23,10 +23,11 @@ _IMPACT_LEVELS = {"highly_positive", "positive", "neutral", "negative", "highly_
 
 # ── Context gathering ────────────────────────────────────────────────────────
 
-def _gather_db_articles(focus: str, db: Session, hours: int, hard_cap: int = 200) -> list[Article]:
+def _gather_db_articles(focus: str, db: Session, hours: int, hard_cap: int = 200, category: str | None = None) -> list[Article]:
     """Match articles by any focus keyword within the last `hours`, sorted by recency.
 
     `hard_cap` is a safety ceiling so a wildly popular topic doesn't blow the prompt.
+    When `category` is provided only articles in that category are returned.
     """
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
     keywords = [kw.strip() for kw in focus.split() if len(kw.strip()) > 2]
@@ -38,6 +39,8 @@ def _gather_db_articles(focus: str, db: Session, hours: int, hard_cap: int = 200
             and_(Article.published_at.is_(None), Article.fetched_at >= cutoff),
         )
     )
+    if category:
+        query = query.filter(Article.category == category)
     if keywords:
         conditions = []
         for kw in keywords:
@@ -52,8 +55,11 @@ def _gather_db_articles(focus: str, db: Session, hours: int, hard_cap: int = 200
     )
 
 
-def count_db_articles(focus: str, db: Session, hours: int) -> int:
-    """Lightweight count of DB articles matching focus in window (no row fetch)."""
+def count_db_articles(focus: str, db: Session, hours: int, category: str | None = None) -> int:
+    """Lightweight count of DB articles matching focus in window (no row fetch).
+
+    When `category` is provided only articles in that category are counted.
+    """
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
     keywords = [kw.strip() for kw in focus.split() if len(kw.strip()) > 2]
     query = db.query(Article.id).filter(
@@ -62,6 +68,8 @@ def count_db_articles(focus: str, db: Session, hours: int) -> int:
             and_(Article.published_at.is_(None), Article.fetched_at >= cutoff),
         )
     )
+    if category:
+        query = query.filter(Article.category == category)
     if keywords:
         conditions = []
         for kw in keywords:
@@ -173,6 +181,7 @@ def _parse_json(raw: str) -> dict:
 async def run_directed_report(
     focus: str,
     db: Session,
+    category: str | None = None,        # if set, restrict DB articles to this category
     include_web: bool = True,
     include_web_search: bool = False,   # explicit multi-engine search (Google/DDG/Bing)
     time_window_hours: int = 24,
@@ -197,7 +206,7 @@ async def run_directed_report(
     _dr_prompt_row = db.query(AppSettings).filter(AppSettings.key == "directed_report_system_prompt").first()
     _custom_system_prompt = (_dr_prompt_row.value or "").strip() if _dr_prompt_row else ""
 
-    db_articles = _gather_db_articles(focus, db, time_window_hours)
+    db_articles = _gather_db_articles(focus, db, time_window_hours, category=category)
     if not db_articles and not include_web and not include_web_search:
         raise ValueError("No DB articles match this focus in the chosen window; enable web grounding or web search, or widen the window")
 

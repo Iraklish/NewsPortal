@@ -199,10 +199,11 @@ async def analyze_single_article(
 def directed_preview(
     focus: str = Query(..., min_length=1),
     time_window_hours: int = Query(24, ge=1, le=24 * 365),
+    category: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     """Cheap count of DB articles matching focus + window — for the UI preview."""
-    return {"db_article_count": count_db_articles(focus.strip(), db, time_window_hours)}
+    return {"db_article_count": count_db_articles(focus.strip(), db, time_window_hours, category=category or None)}
 
 
 @router.post("/directed", response_model=DirectedReportOut)
@@ -215,6 +216,7 @@ async def directed_report(
         report = await run_directed_report(
             focus=body.focus,
             db=db,
+            category=body.category or None,
             include_web=body.include_web,
             include_web_search=body.include_web_search,
             time_window_hours=body.time_window_hours,
