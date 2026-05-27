@@ -258,81 +258,36 @@ async def google_search(query: str, date_restrict: str = None, num: int = 10,
     return results
 
 
-# ── DuckDuckGo Lite (paginated) ───────────────────────────────────────────────
-
-def _ddg_parse_page(html: str, engine_tag: str = "duckduckgo") -> tuple[list[dict], dict]:
-    """Parse one DDG Lite response.  Returns (results, next_page_form_data)."""
-    soup = BeautifulSoup(html, "lxml")
-    results: list[dict] = []
-    for link_a in soup.select("a.result-link"):
-        href = link_a.get("href", "")
-        title = link_a.get_text(strip=True)
-        if not href or not title:
-            continue
-        snippet = ""
-        parent_row = link_a.find_parent("tr")
-        if parent_row:
-            sibling = parent_row.find_next_sibling("tr")
-            if sibling:
-                snippet = sibling.get_text(separator=" ", strip=True)
-        try:
-            source = urlparse(href).netloc.replace("www.", "")
-        except Exception:
-            source = ""
-        results.append({
-            "title": title, "url": href, "snippet": snippet,
-            "source": source, "published_at": None, "engine": engine_tag,
-        })
-
-    # Extract next-page hidden form fields (class="liteform")
-    next_data: dict = {}
-    next_form = soup.find("form", class_="liteform")
-    if next_form:
-        for inp in next_form.find_all("input", type="hidden"):
-            name = inp.get("name", "")
-            value = inp.get("value", "")
-            if name:
-                next_data[name] = value
-
-    return results, next_data
-
+# ── DuckDuckGo (via duckduckgo_search library) ────────────────────────────────
 
 async def duckduckgo_search(query: str, num: int = 30) -> list[dict]:
-    """DuckDuckGo Lite — paginated, no API key needed.
+    """DuckDuckGo search via the duckduckgo_search library.
 
-    Each page returns ~10 results. Follows the next-page form tokens
-    to collect up to `num` results across multiple pages (max 5 pages).
+    Uses primp (browser TLS impersonation) internally — much more reliable
+    than raw HTTP scraping.  Runs the sync DDGS call in a thread pool.
     """
-    all_results: list[dict] = []
-    _hdrs = {"User-Agent": _USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}
+    def _sync() -> list[dict]:
+        from duckduckgo_search import DDGS
+        results: list[dict] = []
+        try:
+            with DDGS(timeout=20) as ddgs:
+                for r in ddgs.text(query, max_results=num):
+                    url = r.get("href", "")
+                    results.append({
+                        "title": r.get("title", ""),
+                        "url": url,
+                        "snippet": r.get("body", ""),
+                        "source": urlparse(url).netloc.replace("www.", "") if url else "",
+                        "published_at": None,
+                        "engine": "duckduckgo",
+                    })
+        except Exception as exc:
+            logger.warning("[ddg] library search failed: %s", exc)
+        return results
 
-    async with httpx.AsyncClient(headers=_hdrs, follow_redirects=True, timeout=15.0) as client:
-        form_data: dict = {"q": query}
-        for page_num in range(1, 6):          # max 5 pages → up to ~50 results
-            try:
-                r = await client.post("https://lite.duckduckgo.com/lite/", data=form_data)
-                r.raise_for_status()
-            except Exception as exc:
-                logger.warning("[ddg] page %d request failed: %s", page_num, exc)
-                break
-
-            page_results, next_data = _ddg_parse_page(r.text)
-            all_results.extend(page_results)
-
-            if len(all_results) >= num or not next_data or not page_results:
-                break
-            form_data = next_data   # follow the next-page form
-
-    seen: set[str] = set()
-    unique: list[dict] = []
-    for r in all_results:
-        url = r["url"]
-        if url not in seen:
-            seen.add(url)
-            unique.append(r)
-
-    logger.debug("[ddg] %d unique results for '%s'", len(unique), query[:60])
-    return unique[:num]
+    results = await asyncio.to_thread(_sync)
+    logger.debug("[ddg] %d results for '%s'", len(results), query[:60])
+    return results
 
 
 # ── Bing Web Search API ───────────────────────────────────────────────────────
@@ -365,18 +320,18 @@ async def bing_search_api(query: str, api_key: str, num: int = 10) -> list[dict]
     return results
 
 
-# ── Bing HTML scraping (paginated, no key) ────────────────────────────────────
+# ── Bing HTML scraping (curl_cffi browser impersonation) ─────────────────────
 
 def _bing_parse_page(html: str) -> list[dict]:
     """Parse one Bing HTML result page."""
     soup = BeautifulSoup(html, "lxml")
     results: list[dict] = []
-    _SELECTORS = [
-        ("li.b_algo", "h2 a", ".b_caption p, .b_snippet p, p"),
-        (".b_algo",   "h2 a", ".b_caption p, p"),
-        ("#b_results > li", "h2 a", "p"),
-    ]
-    for container_sel, link_sel, snippet_sel in _SELECTORS:
+    # Try multiple selector strategies in order of reliability
+    for container_sel, link_sel, snippet_sel in [
+        ("li.b_algo",      "h2 a",  ".b_caption p, .b_snippet"),
+        (".b_algo",        "h2 a",  ".b_caption p"),
+        ("#b_results > li","h2 a",  "p"),
+    ]:
         containers = soup.select(container_sel)
         if not containers:
             continue
@@ -404,111 +359,119 @@ def _bing_parse_page(html: str) -> list[dict]:
 
 
 async def bing_html_search(query: str, num: int = 30) -> list[dict]:
-    """Bing HTML scraping — paginated, no API key needed.
+    """Bing HTML scraping via curl_cffi browser impersonation.
 
-    Fetches up to 5 pages concurrently (each page = 10 results → up to 50 total).
+    Impersonates Chrome TLS fingerprint so Bing doesn't block the request.
+    Fetches pages concurrently inside a shared session (cookie persistence).
     """
+    from curl_cffi.requests import AsyncSession
+
     pages_needed = min(5, (num + 9) // 10)
     offsets = [1 + i * 10 for i in range(pages_needed)]
 
-    _hdrs = {
-        "User-Agent": _USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Upgrade-Insecure-Requests": "1",
-    }
+    seen: set[str] = set()
+    all_results: list[dict] = []
 
-    async def _fetch_page(first: int) -> list[dict]:
-        try:
-            async with httpx.AsyncClient(headers=_hdrs, follow_redirects=True, timeout=15.0) as client:
-                r = await client.get(
+    try:
+        async with AsyncSession(impersonate="chrome124") as session:
+            responses = await asyncio.gather(*[
+                session.get(
                     "https://www.bing.com/search",
                     params={"q": query, "first": first, "count": 10, "setlang": "en"},
                 )
-                r.raise_for_status()
-                return _bing_parse_page(r.text)
-        except Exception as exc:
-            logger.warning("[bing-html] page first=%d failed: %s", first, exc)
-            return []
+                for first in offsets
+            ], return_exceptions=True)
 
-    page_lists = await asyncio.gather(*[_fetch_page(o) for o in offsets])
+        for resp in responses:
+            if isinstance(resp, Exception):
+                logger.warning("[bing] page failed: %s", resp)
+                continue
+            for item in _bing_parse_page(resp.text):
+                if item["url"] not in seen:
+                    seen.add(item["url"])
+                    all_results.append(item)
+    except Exception as exc:
+        logger.warning("[bing] search failed: %s", exc)
 
-    seen: set[str] = set()
-    all_results: list[dict] = []
-    for page in page_lists:
-        for item in page:
-            if item["url"] not in seen:
-                seen.add(item["url"])
-                all_results.append(item)
-
-    logger.debug("[bing-html] %d unique results for '%s'", len(all_results), query[:60])
+    logger.debug("[bing] %d results for '%s'", len(all_results), query[:60])
     return all_results[:num]
 
 
-# ── Google HTML scraping (best-effort, may be blocked) ───────────────────────
+# ── Google HTML scraping (curl_cffi browser impersonation) ───────────────────
+
+def _unwrap_google_url(href: str) -> str:
+    """Unwrap Google redirect URLs (/url?q=... → actual URL)."""
+    if href.startswith("/url?"):
+        from urllib.parse import parse_qs
+        qs = parse_qs(href[5:])          # strip leading "/url?"
+        candidates = qs.get("q", [])
+        if candidates and candidates[0].startswith("http"):
+            return candidates[0]
+    return href
+
 
 def _google_parse_page(html: str) -> list[dict]:
     """Parse Google Search result HTML.
 
-    Google's HTML layout changes frequently — we try multiple strategies.
+    Strategies (most to least reliable):
+      1. div.yuRUbf — canonical link wrapper Google has used for years
+      2. h3 inside any <a href=http…> — universal fallback
     """
     soup = BeautifulSoup(html, "lxml")
     results: list[dict] = []
     seen: set[str] = set()
 
-    # Strategy 1: Modern Google — div[data-sokoban-container] or div.g
-    for container_sel in ("div[data-sokoban-container]", "div.g", "div.MjjYud"):
-        for container in soup.select(container_sel):
-            a_tags = container.find_all("a", href=True)
-            for a in a_tags:
-                href = a.get("href", "")
-                if not href.startswith("http") or href in seen:
-                    continue
-                # Must have an h3 nearby to be a search result
-                h3 = a.find("h3") or container.find("h3")
-                if not h3:
-                    continue
-                title = h3.get_text(strip=True)
-                if not title:
-                    continue
-                snippet = ""
-                for cls in ("VwiC3b", "st", "aCOpRe", "s"):
-                    el = container.select_one(f".{cls}")
-                    if el:
-                        snippet = el.get_text(strip=True)
-                        break
-                try:
-                    source = urlparse(href).netloc.replace("www.", "")
-                except Exception:
-                    source = ""
-                seen.add(href)
-                results.append({
-                    "title": title, "url": href, "snippet": snippet,
-                    "source": source, "published_at": None, "engine": "google",
-                })
-                break
-        if results:
-            break
+    # Strategy 1: div.yuRUbf contains the result link + h3
+    for yuRUbf in soup.select("div.yuRUbf, div.kb0PBd"):
+        a = yuRUbf.select_one("a[href]")
+        if not a:
+            continue
+        href = _unwrap_google_url(a.get("href", ""))
+        if not href.startswith("http") or href in seen:
+            continue
+        h3 = a.find("h3") or yuRUbf.find("h3")
+        if not h3:
+            continue
+        title = h3.get_text(strip=True)
+        if not title:
+            continue
+        # Snippet: look in the enclosing result block
+        snippet = ""
+        block = yuRUbf.find_parent("div", class_=lambda c: c and "g" in c.split())
+        if block:
+            for cls in ("VwiC3b", "IsZvec", "s3v9rd", "st"):
+                el = block.select_one(f".{cls}")
+                if el:
+                    snippet = el.get_text(separator=" ", strip=True)[:300]
+                    break
+        try:
+            source = urlparse(href).netloc.replace("www.", "")
+        except Exception:
+            source = ""
+        seen.add(href)
+        results.append({
+            "title": title, "url": href, "snippet": snippet,
+            "source": source, "published_at": None, "engine": "google",
+        })
 
-    # Strategy 2: h3-based fallback for any layout
+    # Strategy 2: any h3 whose nearest ancestor <a> points to an external URL
     if not results:
         for h3 in soup.find_all("h3"):
             a = h3.find_parent("a") or h3.find("a")
             if not a:
                 continue
-            href = a.get("href", "")
+            href = _unwrap_google_url(a.get("href", ""))
             if not href.startswith("http") or href in seen:
                 continue
             title = h3.get_text(strip=True)
             if not title:
                 continue
-            # Walk up to find a snippet
             snippet = ""
             parent = h3.find_parent("div")
             if parent:
                 for span in parent.find_all("span"):
                     text = span.get_text(strip=True)
-                    if len(text) > 50 and text != title:
+                    if len(text) > 60 and text != title:
                         snippet = text[:300]
                         break
             try:
@@ -525,49 +488,45 @@ def _google_parse_page(html: str) -> list[dict]:
 
 
 async def google_html_search(query: str, num: int = 20) -> list[dict]:
-    """Google HTML scraping — best-effort, no API key needed.
+    """Google HTML scraping via curl_cffi browser impersonation.
 
-    May be blocked by CAPTCHA; returns empty list gracefully when detected.
-    Fetches up to 3 pages (10 results each) concurrently.
+    Impersonates Chrome TLS fingerprint, which bypasses most bot-detection.
+    Falls back gracefully on CAPTCHA.
     """
+    from curl_cffi.requests import AsyncSession
+
     pages_needed = min(3, (num + 9) // 10)
     offsets = [i * 10 for i in range(pages_needed)]
 
-    _hdrs = {
-        "User-Agent": _USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.google.com/",
-        "Upgrade-Insecure-Requests": "1",
-    }
-
-    async def _fetch_page(start: int) -> list[dict]:
-        try:
-            async with httpx.AsyncClient(headers=_hdrs, follow_redirects=True, timeout=15.0) as client:
-                r = await client.get(
-                    "https://www.google.com/search",
-                    params={"q": query, "start": start, "num": 10, "hl": "en"},
-                )
-                # Google returns 200 even for CAPTCHA pages
-                if "captcha" in r.text.lower() or "unusual traffic" in r.text.lower():
-                    logger.warning("[google-html] CAPTCHA detected for '%s'", query[:60])
-                    return []
-                return _google_parse_page(r.text)
-        except Exception as exc:
-            logger.warning("[google-html] page start=%d failed: %s", start, exc)
-            return []
-
-    page_lists = await asyncio.gather(*[_fetch_page(o) for o in offsets])
-
     seen: set[str] = set()
     all_results: list[dict] = []
-    for page in page_lists:
-        for item in page:
-            if item["url"] not in seen:
-                seen.add(item["url"])
-                all_results.append(item)
 
-    logger.debug("[google-html] %d unique results for '%s'", len(all_results), query[:60])
+    try:
+        async with AsyncSession(impersonate="chrome124") as session:
+            responses = await asyncio.gather(*[
+                session.get(
+                    "https://www.google.com/search",
+                    params={"q": query, "start": start, "num": 10, "hl": "en", "gl": "us"},
+                )
+                for start in offsets
+            ], return_exceptions=True)
+
+        for resp in responses:
+            if isinstance(resp, Exception):
+                logger.warning("[google] page failed: %s", resp)
+                continue
+            text = resp.text
+            if "captcha" in text.lower() or "unusual traffic" in text.lower():
+                logger.warning("[google] CAPTCHA detected for '%s'", query[:60])
+                continue
+            for item in _google_parse_page(text):
+                if item["url"] not in seen:
+                    seen.add(item["url"])
+                    all_results.append(item)
+    except Exception as exc:
+        logger.warning("[google] search failed: %s", exc)
+
+    logger.debug("[google] %d results for '%s'", len(all_results), query[:60])
     return all_results[:num]
 
 
@@ -579,11 +538,11 @@ async def full_web_search(query: str, num: int = 50) -> dict:
     Merges and deduplicates results from all three engines.
     Returns a dict with 'results', 'total', and per-engine counts.
     """
-    per_engine = max(num // 2, 20)
-
-    ddg_task   = duckduckgo_search(query, num=per_engine)
-    bing_task  = bing_html_search(query, num=per_engine)
-    goog_task  = google_html_search(query, num=per_engine // 2)
+    # Give each engine its own budget equal to `num` — deduplication trims the total.
+    # This ensures that if one engine returns fewer unique results, the others fill in.
+    ddg_task   = duckduckgo_search(query, num=num)
+    bing_task  = bing_html_search(query, num=num)
+    goog_task  = google_html_search(query, num=min(num, 30))
 
     ddg_res, bing_res, goog_res = await asyncio.gather(
         ddg_task, bing_task, goog_task, return_exceptions=True,
