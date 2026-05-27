@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from ..models import Article, DirectedReport
+from ..models import AppSettings, Article, DirectedReport
 from .ai_client import call_ai, call_ai_grounded, get_current_ai_settings
 
 logger = logging.getLogger(__name__)
@@ -123,15 +123,9 @@ def _build_context_block(db_articles: list[Article], web_results: list[dict]) ->
     return "\n".join(blocks), refs
 
 
-def _build_prompts(focus: str, context_text: str) -> tuple[str, str]:
-    system = (
-        "You are a senior economic, financial and geopolitical analyst. "
-        "Synthesize a coherent, evidence-grounded report from multiple sources. "
-        "Cite specific items from the context by their [DB-N] / [WEB-N] tags inline where appropriate. "
-        "Be concrete: use numbers, named players, dates, sectors. Avoid hedging fluff. "
-        "Acknowledge contradictions between sources rather than glossing over them. "
-        "Respond with ONLY a single valid JSON object — no markdown, no surrounding prose."
-    )
+def _build_prompts(focus: str, context_text: str, system_prompt: str | None = None) -> tuple[str, str]:
+    from ..config import DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT
+    system = (system_prompt or "").strip() or DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT
 
     user = f"""Topic of focus: "{focus}"
 
@@ -199,6 +193,10 @@ async def run_directed_report(
     if not focus:
         raise ValueError("focus is required")
 
+    # Read optional custom system prompt from DB
+    _dr_prompt_row = db.query(AppSettings).filter(AppSettings.key == "directed_report_system_prompt").first()
+    _custom_system_prompt = (_dr_prompt_row.value or "").strip() if _dr_prompt_row else ""
+
     db_articles = _gather_db_articles(focus, db, time_window_hours)
     if not db_articles and not include_web and not include_web_search:
         raise ValueError("No DB articles match this focus in the chosen window; enable web grounding or web search, or widen the window")
@@ -213,7 +211,7 @@ async def run_directed_report(
 
     # Build initial context (DB articles + any explicit web results)
     context_text, references = _build_context_block(db_articles, explicit_web_results)
-    system, user = _build_prompts(focus, context_text)
+    system, user = _build_prompts(focus, context_text, _custom_system_prompt)
 
     grounded_used = False
     if include_web:
@@ -257,7 +255,7 @@ async def run_directed_report(
                 )
                 # Rebuild context so the AI sees web snippets as [WEB-N] blocks it can cite.
                 context_text, references = _build_context_block(db_articles, fallback_results)
-                system, user = _build_prompts(focus, context_text)
+                system, user = _build_prompts(focus, context_text, _custom_system_prompt)
                 raw = await call_ai(system=system, user=user, max_tokens=4000, db=db)
             else:
                 logger.warning(

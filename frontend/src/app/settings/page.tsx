@@ -42,6 +42,7 @@ export default function SettingsPage() {
         default_ai_model: s.default_ai_model,
         chat_system_prompt: s.chat_system_prompt_customized ? s.chat_system_prompt : '',
         ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '',
+        directed_report_system_prompt: s.directed_report_system_prompt_customized ? s.directed_report_system_prompt : '',
         fetch_interval_minutes: s.fetch_interval_minutes,
       })
     }).catch((e: unknown) => {
@@ -115,7 +116,7 @@ export default function SettingsPage() {
         <p className="font-semibold">Could not load settings</p>
         <p className="text-red-400/70 text-xs mt-0.5">{loadError} — is the backend running on port 8000?</p>
       </div>
-      <button onClick={() => { setLoadError(''); setLoading(true); settingsApi.get().then(s => { setSettings(s); setForm({ default_ai_provider: s.default_ai_provider, default_ai_model: s.default_ai_model, chat_system_prompt: s.chat_system_prompt_customized ? s.chat_system_prompt : '', ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '', fetch_interval_minutes: s.fetch_interval_minutes }) }).catch((e: unknown) => setLoadError(e instanceof Error ? e.message : 'Failed')).finally(() => setLoading(false)) }} className="ml-auto flex-shrink-0 p-1.5 hover:bg-red-500/20 rounded transition-colors"><RefreshCw size={14} /></button>
+      <button onClick={() => { setLoadError(''); setLoading(true); settingsApi.get().then(s => { setSettings(s); setForm({ default_ai_provider: s.default_ai_provider, default_ai_model: s.default_ai_model, chat_system_prompt: s.chat_system_prompt_customized ? s.chat_system_prompt : '', ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '', directed_report_system_prompt: s.directed_report_system_prompt_customized ? s.directed_report_system_prompt : '', fetch_interval_minutes: s.fetch_interval_minutes }) }).catch((e: unknown) => setLoadError(e instanceof Error ? e.message : 'Failed')).finally(() => setLoading(false)) }} className="ml-auto flex-shrink-0 p-1.5 hover:bg-red-500/20 rounded transition-colors"><RefreshCw size={14} /></button>
     </div>
   )
 
@@ -254,6 +255,16 @@ export default function SettingsPage() {
               defaultValue={settings?.ask_system_prompt_default || ''}
               customized={settings?.ask_system_prompt_customized || false}
               onReset={() => resetKey('ask_system_prompt')}
+            />
+            <PromptField
+              label="Analysis & Prognosis report"
+              hint="System prompt for the directed report synthesiser (Analysis page). Defines the analyst persona and output constraints."
+              fieldKey="directed_report_system_prompt"
+              form={form}
+              set={set}
+              defaultValue={settings?.directed_report_system_prompt_default || ''}
+              customized={settings?.directed_report_system_prompt_customized || false}
+              onReset={() => resetKey('directed_report_system_prompt')}
             />
           </div>
         </Card>
@@ -411,7 +422,7 @@ function PromptField({
 }: {
   label: string
   hint: string
-  fieldKey: 'chat_system_prompt' | 'ask_system_prompt'
+  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt'
   form: SettingsUpdate
   set: (k: keyof SettingsUpdate, v: string | boolean | number) => void
   defaultValue: string

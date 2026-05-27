@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # AI prompt overrides (empty -> use hardcoded defaults)
     chat_system_prompt: str = ""
     ask_system_prompt: str = ""
+    directed_report_system_prompt: str = ""
 
     # Logging
     log_retention_hours: int = 24  # how many hourly log files to keep
@@ -51,6 +52,15 @@ DEFAULT_ASK_SYSTEM_PROMPT = (
     "Answer the user's question grounded strictly in the article below "
     "(and any prior AI analyses of it). If the article does not contain the answer, say so. "
     "Be concrete: cite numbers, dates, named actors when relevant."
+)
+
+DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT = (
+    "You are a senior economic, financial and geopolitical analyst. "
+    "Synthesize a coherent, evidence-grounded report from multiple sources. "
+    "Cite specific items from the context by their [DB-N] / [WEB-N] tags inline where appropriate. "
+    "Be concrete: use numbers, named players, dates, sectors. Avoid hedging fluff. "
+    "Acknowledge contradictions between sources rather than glossing over them. "
+    "Respond with ONLY a single valid JSON object — no markdown, no surrounding prose."
 )
 
 

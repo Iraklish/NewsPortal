@@ -190,10 +190,13 @@ export interface AppSettingsOut {
   custom_ai_model?: string
   chat_system_prompt: string
   ask_system_prompt: string
+  directed_report_system_prompt: string
   chat_system_prompt_default: string
   ask_system_prompt_default: string
+  directed_report_system_prompt_default: string
   chat_system_prompt_customized: boolean
   ask_system_prompt_customized: boolean
+  directed_report_system_prompt_customized: boolean
   auto_analyze_enabled: boolean
   fetch_interval_minutes: number
 }
@@ -220,6 +223,7 @@ export interface SettingsUpdate {
   news_api_key?: string
   chat_system_prompt?: string
   ask_system_prompt?: string
+  directed_report_system_prompt?: string
   auto_analyze_enabled?: boolean
   fetch_interval_minutes?: number
 }

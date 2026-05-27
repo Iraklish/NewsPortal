@@ -125,6 +125,7 @@ class SettingsUpdate(BaseModel):
     default_ai_model: Optional[str] = None
     chat_system_prompt: Optional[str] = None
     ask_system_prompt: Optional[str] = None
+    directed_report_system_prompt: Optional[str] = None
     auto_analyze_enabled: Optional[bool] = None
     fetch_interval_minutes: Optional[int] = None
 
@@ -156,10 +157,13 @@ class AppSettingsOut(BaseModel):
     custom_ai_model: Optional[str] = None
     chat_system_prompt: str
     ask_system_prompt: str
+    directed_report_system_prompt: str
     chat_system_prompt_default: str
     ask_system_prompt_default: str
+    directed_report_system_prompt_default: str
     chat_system_prompt_customized: bool
     ask_system_prompt_customized: bool
+    directed_report_system_prompt_customized: bool
     auto_analyze_enabled: bool
     fetch_interval_minutes: int
 
