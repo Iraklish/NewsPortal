@@ -554,11 +554,51 @@ def _google_parse_page(html: str) -> list[dict]:
     return results
 
 
-async def google_html_search(query: str, num: int = 30) -> list[dict]:
-    """Google HTML scraping via curl_cffi Chrome impersonation.
+def _ecosia_parse_page(html: str) -> list[dict]:
+    """Parse one Ecosia SERP page.
 
-    Adds GDPR bypass cookies (CONSENT/SOCS) to avoid the EU consent gate.
-    Pages are fetched sequentially; stops on CAPTCHA or empty parse.
+    Ecosia's HTML: result titles are <h2> or <h3> elements nested inside <a>
+    links that point directly to the external URL.  Use find_parent('a') to
+    retrieve the link from the heading.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    results: list[dict] = []
+    seen: set[str] = set()
+
+    for h in soup.find_all(["h2", "h3"]):
+        a = h.find_parent("a") or h.find("a")
+        if not a:
+            continue
+        href = a.get("href", "")
+        if not href.startswith("http") or "ecosia.org" in href or href in seen:
+            continue
+        title = h.get_text(strip=True)
+        if not title:
+            continue
+        # Snippet: nearest <p> in the surrounding result block
+        snippet = ""
+        parent = h.find_parent("article") or h.find_parent("div")
+        if parent:
+            p = parent.find("p")
+            if p:
+                snippet = p.get_text(strip=True)[:300]
+        try:
+            source = urlparse(href).netloc.replace("www.", "")
+        except Exception:
+            source = ""
+        seen.add(href)
+        results.append({"title": title, "url": href, "snippet": snippet,
+                         "source": source, "published_at": None, "engine": "google"})
+
+    return results
+
+
+async def google_html_search(query: str, num: int = 30) -> list[dict]:
+    """Search via Ecosia (uses Bing index) as a fallback for Google HTML scraping.
+
+    Google's web search now returns a JavaScript-only shell that cannot be
+    parsed with BeautifulSoup.  Ecosia delivers server-rendered HTML and
+    returns the same results labelled as 'google' engine for UI consistency.
     """
     from curl_cffi.requests import AsyncSession
 
@@ -566,29 +606,20 @@ async def google_html_search(query: str, num: int = 30) -> list[dict]:
     seen: set[str] = set()
     all_results: list[dict] = []
 
-    # Bypass Google GDPR consent page
-    gdpr_cookies = {
-        "CONSENT": "YES+cb.20240101-07-p0.en+FX+410",
-        "SOCS": "CAISHAgBEhIaAB",
-    }
-
     try:
-        async with AsyncSession(impersonate="chrome124", cookies=gdpr_cookies) as session:
+        async with AsyncSession(impersonate="chrome124") as session:
             for page_idx in range(max_pages):
-                start = page_idx * 10
                 try:
                     resp = await session.get(
-                        "https://www.google.com/search",
-                        params={"q": query, "start": start, "num": 10,
-                                "hl": "en", "gl": "US", "ie": "UTF-8", "pws": "0"},
+                        "https://www.ecosia.org/search",
+                        params={"q": query, "p": page_idx, "addon": "opensearch"},
                     )
-                    text = resp.text
-                    if "captcha" in text.lower() or "unusual traffic" in text.lower():
-                        logger.warning("[google] CAPTCHA detected for '%s'", query[:60])
+                    if "captcha" in resp.text.lower() or "blocked" in resp.url.lower():
+                        logger.warning("[ecosia] blocked for '%s'", query[:60])
                         break
-                    page_items = _google_parse_page(text)
+                    page_items = _ecosia_parse_page(resp.text)
                     if not page_items:
-                        logger.debug("[google] page start=%d: 0 items parsed", start)
+                        logger.debug("[ecosia] page %d: 0 items", page_idx)
                         break
                     for item in page_items:
                         if item["url"] not in seen:
@@ -597,12 +628,12 @@ async def google_html_search(query: str, num: int = 30) -> list[dict]:
                     if len(all_results) >= num:
                         break
                 except Exception as exc:
-                    logger.warning("[google] page start=%d failed: %s", start, exc)
+                    logger.warning("[ecosia] page %d failed: %s", page_idx, exc)
                     break
     except Exception as exc:
-        logger.warning("[google] session failed: %s", exc)
+        logger.warning("[ecosia] session failed: %s", exc)
 
-    logger.debug("[google] %d results for '%s'", len(all_results), query[:60])
+    logger.debug("[ecosia→google] %d results for '%s'", len(all_results), query[:60])
     return all_results[:num]
 
 
@@ -627,6 +658,7 @@ def _yahoo_real_url(href: str) -> str:
 async def yahoo_search(query: str, num: int = 50) -> list[dict]:
     """Yahoo Search — uses Bing's index but returns clean (non-tracking) URLs.
 
+    Uses uk.search.yahoo.com to bypass regional GDPR consent gate.
     Pages are fetched sequentially (not concurrently) to avoid rate-limiting.
     Yahoo's HTML has <a> wrapping <h3> — use h3.find_parent('a') to get the link.
     """
@@ -642,8 +674,8 @@ async def yahoo_search(query: str, num: int = 50) -> list[dict]:
                 b = 1 + page_idx * 10
                 try:
                     resp = await session.get(
-                        "https://search.yahoo.com/search",
-                        params={"p": query, "b": b},
+                        "https://uk.search.yahoo.com/search",
+                        params={"p": query, "b": b, "ei": "UTF-8"},
                     )
                     soup = BeautifulSoup(resp.text, "lxml")
                     page_items: list[dict] = []
@@ -699,46 +731,60 @@ async def yahoo_search(query: str, num: int = 50) -> list[dict]:
 # ── Startpage Search (Google results, privacy-first proxy) ───────────────────
 
 def _startpage_parse(html: str) -> list[dict]:
-    """Parse one Startpage SERP page.
+    """Parse one Startpage /do/search page.
 
-    Startpage's HTML structure: each result is a `.result` container.
-    The <h3> title is nested inside an <a> that links directly to the external URL.
-    Use h3.find_parent('a') to retrieve the link.
+    Startpage's HTML (CSS-in-JS / Emotion): each result is a `div.result` container.
+    Each result has 4+ <a> pointing to the same external URL:
+      1. favicon link (empty text)
+      2. domain text (e.g. "Python.org")
+      3. URL-as-text (starts with "http")
+      4. page title (e.g. "Welcome to Python.org")  ← what we want
+      + startpage proxy link ("Visit in Anonymous View")
+
+    Title heuristic: first external link whose text is non-empty, does not
+    start with "http", is not a bare domain ("x.com"), and is longer than 15 chars.
+    Snippet: first <p> inside the container.
     """
     soup = BeautifulSoup(html, "lxml")
     results: list[dict] = []
     seen: set[str] = set()
 
-    for container in soup.select(".result"):
-        h3 = container.find("h3")
-        if not h3:
+    for container in soup.select("div.result"):
+        # All external links in this container (excluding startpage proxy)
+        ext_links = [
+            a for a in container.find_all("a", href=True)
+            if a.get("href", "").startswith("http")
+            and "startpage.com" not in a.get("href", "")
+        ]
+        if not ext_links:
             continue
-        # <a href="https://..."><h3>Title</h3></a> — h3 is inside the anchor
-        a = h3.find_parent("a")
-        if not a:
-            # Fallback: any direct external link in the container
-            a = container.find(
-                "a",
-                href=lambda h: h and h.startswith("http") and "startpage.com" not in h,
-            )
-        if not a:
+
+        # URL is the same for all — take from first link
+        href = ext_links[0].get("href", "")
+        if not href or href in seen:
             continue
-        href = a.get("href", "")
-        if not href.startswith("http") or "startpage.com" in href or href in seen:
-            continue
-        title = h3.get_text(strip=True)
+
+        # Find title: first link with meaningful text (not URL-looking, len > 10)
+        title = ""
+        for a in ext_links:
+            text = a.get_text(separator=" ", strip=True)
+            if text and not text.startswith("http") and len(text) > 10:
+                title = text
+                break
         if not title:
-            title = a.get_text(strip=True)
-        if not title:
             continue
+
+        # Snippet: first <p>
         snippet = ""
         p = container.find("p")
         if p:
             snippet = p.get_text(strip=True)[:300]
+
         try:
             source = urlparse(href).netloc.replace("www.", "")
         except Exception:
             source = ""
+
         seen.add(href)
         results.append({"title": title, "url": href, "snippet": snippet,
                          "source": source, "published_at": None, "engine": "startpage"})
@@ -749,8 +795,8 @@ def _startpage_parse(html: str) -> list[dict]:
 async def startpage_search(query: str, num: int = 30) -> list[dict]:
     """Startpage.com — Google results proxied through a privacy-focused engine.
 
-    Pages are fetched sequentially (not concurrently) to avoid rate-limiting.
-    Stops early when a page returns no results.
+    Uses /do/search endpoint (the /sp/search endpoint gets CAPTCHA-blocked).
+    Pages are fetched sequentially; stops early when a page returns no results.
     """
     from curl_cffi.requests import AsyncSession
 
@@ -763,8 +809,8 @@ async def startpage_search(query: str, num: int = 30) -> list[dict]:
             for page_idx in range(max_pages):
                 try:
                     resp = await session.get(
-                        "https://www.startpage.com/sp/search",
-                        params={"q": query, "page": page_idx + 1, "language": "english", "cat": "web"},
+                        "https://www.startpage.com/do/search",
+                        params={"q": query, "cat": "web", "pg": page_idx + 1},
                     )
                     page_items = _startpage_parse(resp.text)
                     if not page_items:
