@@ -32,6 +32,9 @@ function stripHtml(html: string): string {
     .trim()
 }
 
+/** Sentinel value used in `tag` state to mean "articles with no tags". */
+const TAG_NONE = '__none__'
+
 const ASPECT_PRESETS = [
   'Summary',
   'Detailed summary',
@@ -123,10 +126,19 @@ export default function NewsPage() {
     const effQuery = params?.q ?? query
     const effTag = params?.tag !== undefined ? params.tag : tag
     const effLimit = params?.limit ?? (gridCols * gridRows)
+    const isUntagged = effTag === TAG_NONE
     try {
       const [data, countRes] = await Promise.all([
-        articlesApi.list({ limit: effLimit, category: effCategory, q: effQuery, tag: effTag }),
-        articlesApi.count({ category: effCategory, q: effQuery, tag: effTag }),
+        articlesApi.list({
+          limit: effLimit, category: effCategory, q: effQuery,
+          tag: isUntagged ? undefined : effTag,
+          untagged: isUntagged || undefined,
+        }),
+        articlesApi.count({
+          category: effCategory, q: effQuery,
+          tag: isUntagged ? undefined : effTag,
+          untagged: isUntagged || undefined,
+        }),
       ])
       setArticles(data)
       setTotalCount(countRes.count)
@@ -293,15 +305,7 @@ export default function NewsPage() {
           <option value="">All Categories</option>
           {categories.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select
-          value={tag}
-          onChange={e => pickTag(e.target.value)}
-          className="bg-[#0d1117] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-teal-500"
-          title="Filter by topic tag"
-        >
-          <option value="">All Tags</option>
-          {allTags.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
+        <TagFilter value={tag} onChange={pickTag} allTags={allTags} />
       </div>
 
       {/* Grid / limit controls */}
@@ -436,6 +440,151 @@ export default function NewsPage() {
     </div>
   )
 }
+
+// ── Tag filter combobox ───────────────────────────────────────────────────────
+
+function TagFilter({
+  value,
+  onChange,
+  allTags,
+}: {
+  value: string
+  onChange: (v: string) => void
+  allTags: string[]
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    function onMD(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onMD)
+    return () => document.removeEventListener('mousedown', onMD)
+  }, [])
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 0)
+    else setSearch('')
+  }, [open])
+
+  const TOP_N = 20
+  const displayedTags = search.trim()
+    ? allTags.filter(t => t.toLowerCase().includes(search.toLowerCase())).slice(0, 30)
+    : allTags.slice(0, TOP_N)
+
+  function select(v: string) { onChange(v); setOpen(false) }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      const s = search.trim()
+      if (s) {
+        const exact = displayedTags.find(t => t.toLowerCase() === s.toLowerCase())
+        select(exact ?? s)
+      }
+    }
+    if (e.key === 'Escape') setOpen(false)
+  }
+
+  const label =
+    value === TAG_NONE ? 'No Tags' :
+    value             ? value      :
+                        'All Tags'
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={clsx(
+          'bg-[#0d1117] border rounded-lg px-3 py-2 text-sm flex items-center gap-2 min-w-[130px] transition-colors focus:outline-none',
+          open ? 'border-teal-500/60 text-white' : 'border-[#1e2433] text-slate-300 hover:border-teal-500/40',
+        )}
+      >
+        <span className="flex-1 text-left truncate max-w-[120px]">{label}</span>
+        <ChevronDown size={12} className={clsx('text-slate-500 transition-transform flex-shrink-0', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <div className="absolute top-full mt-1 right-0 z-50 bg-[#0d1117] border border-[#1e2433] rounded-xl shadow-2xl w-56 overflow-hidden">
+          {/* Search */}
+          <div className="p-2 border-b border-[#1e2433]">
+            <div className="relative">
+              <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+              <input
+                ref={inputRef}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder="Search or type a tag…"
+                className="w-full bg-[#161b27] border border-[#1e2433] rounded-lg pl-7 pr-2.5 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-teal-500/50 transition-colors"
+              />
+            </div>
+          </div>
+
+          {/* List */}
+          <div className="max-h-64 overflow-y-auto py-1">
+            {/* All */}
+            <button
+              onClick={() => select('')}
+              className={clsx(
+                'w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2',
+                !value ? 'text-teal-400 bg-teal-500/10' : 'text-slate-300 hover:bg-white/5',
+              )}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-500 flex-shrink-0" />
+              All Tags
+            </button>
+
+            {/* None */}
+            <button
+              onClick={() => select(TAG_NONE)}
+              className={clsx(
+                'w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2',
+                value === TAG_NONE ? 'text-teal-400 bg-teal-500/10' : 'text-slate-400 hover:bg-white/5',
+              )}
+            >
+              <span className="w-1.5 h-1.5 rounded-full border border-slate-500 flex-shrink-0" />
+              No Tags
+            </button>
+
+            {/* Top / filtered tags */}
+            {displayedTags.length > 0 && (
+              <>
+                <div className="px-3 py-1 mt-0.5 border-t border-[#1e2433]">
+                  <span className="text-[10px] text-slate-600 uppercase tracking-wider">
+                    {search.trim() ? 'Matches' : `Top ${Math.min(TOP_N, displayedTags.length)}`}
+                  </span>
+                </div>
+                {displayedTags.map(t => (
+                  <button
+                    key={t}
+                    onClick={() => select(t)}
+                    className={clsx(
+                      'w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2',
+                      value === t ? 'text-teal-400 bg-teal-500/10' : 'text-slate-300 hover:bg-white/5',
+                    )}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-teal-600/50 flex-shrink-0" />
+                    <span className="truncate">{t}</span>
+                  </button>
+                ))}
+              </>
+            )}
+
+            {search.trim() && displayedTags.length === 0 && (
+              <p className="px-3 py-2 text-xs text-slate-600 italic">No tags match &quot;{search}&quot;</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 
 function ArticleCard({
   article, onClick, selected, onSelect,

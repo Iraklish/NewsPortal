@@ -287,13 +287,14 @@ export const articlesApi = {
     })
   },
 
-  list(params?: { skip?: number; limit?: number; category?: string; q?: string; tag?: string }) {
+  list(params?: { skip?: number; limit?: number; category?: string; q?: string; tag?: string; untagged?: boolean }) {
     const qp = new URLSearchParams()
     if (params?.skip !== undefined) qp.set('skip', String(params.skip))
     if (params?.limit !== undefined) qp.set('limit', String(params.limit))
     if (params?.category) qp.set('category', params.category)
     if (params?.q) qp.set('q', params.q)
     if (params?.tag) qp.set('tag', params.tag)
+    if (params?.untagged) qp.set('untagged', 'true')
     const qs = qp.toString()
     return request<Article[]>(`/articles${qs ? '?' + qs : ''}`)
   },
@@ -306,11 +307,12 @@ export const articlesApi = {
     return request<string[]>('/articles/tags')
   },
 
-  count(params?: { category?: string; q?: string; tag?: string }) {
+  count(params?: { category?: string; q?: string; tag?: string; untagged?: boolean }) {
     const qp = new URLSearchParams()
     if (params?.category) qp.set('category', params.category)
     if (params?.q) qp.set('q', params.q)
     if (params?.tag) qp.set('tag', params.tag)
+    if (params?.untagged) qp.set('untagged', 'true')
     const qs = qp.toString()
     return request<{ count: number }>(`/articles/count${qs ? '?' + qs : ''}`)
   },

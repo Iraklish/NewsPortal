@@ -94,13 +94,18 @@ def count_articles(
     category: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
     tag: Optional[str] = Query(None),
+    untagged: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     """Total article count for the given filters (independent of paging)."""
     query = db.query(Article.id)
     if category:
         query = query.filter(Article.category == category)
-    if tag:
+    if untagged:
+        query = query.filter(
+            or_(Article.tags.is_(None), Article.tags == "[]")
+        )
+    elif tag:
         query = query.filter(
             text("EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE value = :tv)").bindparams(tv=tag)
         )
@@ -118,16 +123,21 @@ def count_articles(
 @router.get("", response_model=list[ArticleOut])
 def list_articles(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     category: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
     tag: Optional[str] = Query(None),
+    untagged: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     query = db.query(Article)
     if category:
         query = query.filter(Article.category == category)
-    if tag:
+    if untagged:
+        query = query.filter(
+            or_(Article.tags.is_(None), Article.tags == "[]")
+        )
+    elif tag:
         query = query.filter(
             text("EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE value = :tv)").bindparams(tv=tag)
         )
@@ -252,20 +262,23 @@ def trending_topics(
 
 @router.get("/tags")
 def list_tags(db: Session = Depends(get_db)):
-    """Return all distinct tags that exist across all articles, sorted alphabetically."""
+    """Return all distinct tags sorted by frequency (most-used first, then alphabetically)."""
     rows = db.query(Article.tags).filter(Article.tags.isnot(None)).all()
-    all_tags: set[str] = set()
+    counts: dict[str, int] = {}
     for (raw,) in rows:
         if isinstance(raw, list):
-            all_tags.update(str(t).strip() for t in raw if str(t).strip())
+            tags = [str(t).strip() for t in raw if str(t).strip()]
         elif isinstance(raw, str) and raw.startswith("["):
             try:
                 parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    all_tags.update(str(t).strip() for t in parsed if str(t).strip())
+                tags = [str(t).strip() for t in parsed if str(t).strip()] if isinstance(parsed, list) else []
             except Exception:
-                pass
-    return sorted(all_tags)
+                tags = []
+        else:
+            tags = []
+        for t in tags:
+            counts[t] = counts.get(t, 0) + 1
+    return sorted(counts.keys(), key=lambda t: (-counts[t], t))
 
 
 class TagsIn(BaseModel):
