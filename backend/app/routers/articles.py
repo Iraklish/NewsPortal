@@ -299,24 +299,26 @@ async def auto_tag_article(article_id: int, db: Session = Depends(get_db)):
 
 @router.post("/bulk-auto-tag")
 async def bulk_auto_tag(
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
+    categories: Optional[str] = Query(None, description="Comma-separated category names to restrict tagging to"),
     db: Session = Depends(get_db),
 ):
-    """Auto-tag up to `limit` articles that currently have no tags, newest first."""
+    """Auto-tag up to `limit` articles that currently have no tags, newest first.
+
+    Pass ``categories=telegram,world_news`` to restrict to specific categories.
+    """
     from ..services.tagger import ai_extract_tags
-    articles = (
-        db.query(Article)
-        .filter(
-            or_(
-                Article.tags.is_(None),
-                Article.tags.cast(type_=Article.tags.type) == [],
-                Article.tags == "[]",
-            )
-        )
-        .order_by(Article.fetched_at.desc())
-        .limit(limit)
-        .all()
+    no_tags_filter = or_(
+        Article.tags.is_(None),
+        Article.tags.cast(type_=Article.tags.type) == [],
+        Article.tags == "[]",
     )
+    query = db.query(Article).filter(no_tags_filter)
+    if categories:
+        cat_list = [c.strip() for c in categories.split(",") if c.strip()]
+        if cat_list:
+            query = query.filter(Article.category.in_(cat_list))
+    articles = query.order_by(Article.fetched_at.desc()).limit(limit).all()
     tagged = errors = 0
     for art in articles:
         try:

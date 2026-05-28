@@ -447,9 +447,29 @@ export default function SettingsPage() {
                 </div>
               )}
               {autoTagCategories.length > 0 && (
-                <p className="text-[10px] text-teal-600 mt-2">
-                  {autoTagCategories.length} categor{autoTagCategories.length === 1 ? 'y' : 'ies'} enabled
-                </p>
+                <div className="flex items-center gap-3 mt-3 flex-wrap">
+                  <p className="text-[10px] text-teal-600">
+                    {autoTagCategories.length} categor{autoTagCategories.length === 1 ? 'y' : 'ies'} enabled
+                  </p>
+                  <button
+                    onClick={async () => {
+                      setSavingAutoTag(true)
+                      try {
+                        const r = await articlesApi.bulkAutoTag(500, autoTagCategories)
+                        showToast(`Tagged ${r.tagged} article${r.tagged === 1 ? '' : 's'} (${r.total} untagged found${r.errors ? `, ${r.errors} errors` : ''})`, 'success')
+                      } catch (e: unknown) {
+                        showToast(e instanceof Error ? e.message : 'Tagging failed', 'error')
+                      } finally {
+                        setSavingAutoTag(false)
+                      }
+                    }}
+                    disabled={savingAutoTag}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-500/10 hover:bg-teal-500/20 disabled:opacity-50 border border-teal-500/30 rounded-lg text-[11px] text-teal-300 font-medium transition-colors"
+                  >
+                    {savingAutoTag ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                    Tag untagged articles now
+                  </button>
+                </div>
               )}
             </div>
 

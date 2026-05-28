@@ -404,9 +404,11 @@ export const articlesApi = {
     return request<{ id: number; tags: string[] }>(`/articles/${id}/auto-tag`, { method: 'POST' })
   },
 
-  bulkAutoTag(limit = 50) {
+  bulkAutoTag(limit = 50, categories?: string[]) {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (categories && categories.length > 0) params.set('categories', categories.join(','))
     return request<{ tagged: number; errors: number; total: number }>(
-      `/articles/bulk-auto-tag?limit=${limit}`,
+      `/articles/bulk-auto-tag?${params}`,
       { method: 'POST' },
     )
   },
