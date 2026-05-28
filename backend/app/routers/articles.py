@@ -286,10 +286,11 @@ def set_article_tags(article_id: int, body: TagsIn, db: Session = Depends(get_db
 @router.post("/{article_id}/auto-tag")
 async def auto_tag_article(article_id: int, db: Session = Depends(get_db)):
     """Use AI to extract normalized English topic tags from the article (any source language)."""
+    from ..services.tagger import ai_extract_tags
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
-    tags = await _ai_extract_tags(article, db)
+    tags = await ai_extract_tags(article, db)
     article.tags = tags
     db.commit()
     db.refresh(article)
@@ -302,6 +303,7 @@ async def bulk_auto_tag(
     db: Session = Depends(get_db),
 ):
     """Auto-tag up to `limit` articles that currently have no tags, newest first."""
+    from ..services.tagger import ai_extract_tags
     articles = (
         db.query(Article)
         .filter(
@@ -318,36 +320,12 @@ async def bulk_auto_tag(
     tagged = errors = 0
     for art in articles:
         try:
-            art.tags = await _ai_extract_tags(art, db)
+            art.tags = await ai_extract_tags(art, db)
             db.commit()
             tagged += 1
         except Exception:
             errors += 1
     return {"tagged": tagged, "errors": errors, "total": len(articles)}
-
-
-async def _ai_extract_tags(article: Article, db) -> list[str]:
-    """Call AI to extract 3-7 English topic tags regardless of article language."""
-    from ..services.ai_client import call_ai
-    title = article.title or "(no title)"
-    excerpt = (article.content or article.summary or "")[:1000]
-    system = (
-        "You are a multilingual topic-tagging assistant. Extract canonical English topic tags "
-        "from news articles. The article may be in ANY language — always return tags in English. "
-        "Tags must be concise noun phrases (2-5 words). Return ONLY a valid JSON array of strings, "
-        "nothing else. Example: [\"ceasefire negotiations\", \"Middle East diplomacy\", \"US foreign policy\"]"
-    )
-    user = f"Title: {title}\n\nText excerpt:\n{excerpt}\n\nReturn 3-7 English topic tags as a JSON array:"
-    try:
-        raw = await call_ai(system=system, user=user, max_tokens=250, db=db)
-        cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
-        s, e = cleaned.find("["), cleaned.rfind("]")
-        if s == -1 or e == -1:
-            return []
-        tags = json.loads(cleaned[s : e + 1])
-        return [str(t).strip() for t in tags if str(t).strip()][:10]
-    except Exception:
-        return []
 
 
 @router.get("/{article_id}", response_model=ArticleOut)

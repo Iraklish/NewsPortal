@@ -25,6 +25,7 @@ process eliminates ALL of the above:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -85,6 +86,18 @@ def _should_prune(db) -> bool:
         return True
 
 
+def _get_auto_tag_categories(db) -> set[str]:
+    """Return the set of category names that have auto-tagging enabled."""
+    raw = _db_get(db, "auto_tag_categories")
+    if not raw:
+        return set()
+    try:
+        cats = json.loads(raw)
+        return set(cats) if isinstance(cats, list) else set()
+    except Exception:
+        return set()
+
+
 # ── Retention prune (synchronous — DB only, no I/O) ─────────────────────────
 
 def _retention_prune() -> None:
@@ -141,6 +154,48 @@ async def _run_cycle() -> None:
         # Persist the last-run timestamp so the Settings UI can show it.
         _db_set(db, "scheduler_last_run_at", _now().isoformat())
         db.commit()
+
+        # ── Auto-tag: tag new articles in categories that have it enabled ────
+        auto_tag_cats = _get_auto_tag_categories(db)
+        if auto_tag_cats and new_ids:
+            from .tagger import ai_extract_tags
+            _AUTO_TAG_CAP = 20  # safeguard: never tag more than this per cycle
+            # Single batch query for all new article categories.
+            article_categories: dict[int, str | None] = dict(
+                db.query(Article.id, Article.category)
+                .filter(Article.id.in_(new_ids))
+                .all()
+            )
+            to_tag = [
+                aid for aid in new_ids
+                if article_categories.get(aid) in auto_tag_cats
+            ][:_AUTO_TAG_CAP]
+            if to_tag:
+                logger.info(
+                    "[scheduler] cycle #%d — auto-tagging %d article(s) in categories %s",
+                    cycle_num, len(to_tag), sorted(auto_tag_cats),
+                )
+                tag_ok = tag_err = 0
+                for aid in to_tag:
+                    article = db.query(Article).filter(Article.id == aid).first()
+                    if not article or article.tags:
+                        continue  # skip already-tagged articles
+                    try:
+                        article.tags = await ai_extract_tags(article, db)
+                        db.commit()
+                        tag_ok += 1
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        logger.debug(
+                            "[scheduler] cycle #%d — auto-tag failed for article %d: %s",
+                            cycle_num, aid, exc,
+                        )
+                        tag_err += 1
+                logger.info(
+                    "[scheduler] cycle #%d — auto-tag complete: %d tagged, %d errors",
+                    cycle_num, tag_ok, tag_err,
+                )
 
         if not new_ids:
             logger.info(

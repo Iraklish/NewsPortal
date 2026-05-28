@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { settingsApi, sourcesApi, type AppSettingsOut, type SettingsUpdate, type RssSource } from '@/lib/api'
-import { CheckCircle, AlertCircle, Eye, EyeOff, Save, RefreshCw, Trash2, Plus, Loader2, Rss, Cpu, MessageSquare, Database, Newspaper, RotateCcw, Search, ChevronDown, ChevronRight, Edit2, X, Check, Upload, Tag, Power, Square, CheckSquare, Clock } from 'lucide-react'
+import { settingsApi, sourcesApi, articlesApi, type AppSettingsOut, type SettingsUpdate, type RssSource } from '@/lib/api'
+import { CheckCircle, AlertCircle, Eye, EyeOff, Save, RefreshCw, Trash2, Plus, Loader2, Rss, Cpu, MessageSquare, Database, Newspaper, RotateCcw, Search, ChevronDown, ChevronRight, Edit2, X, Check, Upload, Tag, Power, Square, CheckSquare, Clock, Sparkles } from 'lucide-react'
 
 const AI_PROVIDERS = [
   { value: 'anthropic', label: 'Anthropic (Claude)' },
@@ -33,6 +33,9 @@ export default function SettingsPage() {
   const [modelsError, setModelsError] = useState('')
   const [nextFetchAt, setNextFetchAt] = useState<string | null>(null)
   const [loadError, setLoadError] = useState('')
+  const [autoTagCategories, setAutoTagCategories] = useState<string[]>([])
+  const [allCategories, setAllCategories] = useState<string[]>([])
+  const [savingAutoTag, setSavingAutoTag] = useState(false)
 
   useEffect(() => {
     settingsApi.get().then(s => {
@@ -49,7 +52,26 @@ export default function SettingsPage() {
       setLoadError(e instanceof Error ? e.message : 'Could not reach backend')
     }).finally(() => setLoading(false))
     sourcesApi.status().then(s => setNextFetchAt(s.next_fetch_at ?? null)).catch(() => {})
+    settingsApi.getAutoTagCategories().then(r => setAutoTagCategories(r.categories)).catch(() => {})
+    articlesApi.categories().then(cats => setAllCategories(cats)).catch(() => {})
   }, [])
+
+  async function toggleAutoTagCategory(cat: string) {
+    const next = autoTagCategories.includes(cat)
+      ? autoTagCategories.filter(c => c !== cat)
+      : [...autoTagCategories, cat]
+    setAutoTagCategories(next)
+    setSavingAutoTag(true)
+    try {
+      await settingsApi.setAutoTagCategories(next)
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Save failed', 'error')
+      // Revert on failure
+      setAutoTagCategories(autoTagCategories)
+    } finally {
+      setSavingAutoTag(false)
+    }
+  }
 
   async function resetKey(key: string) {
     try {
@@ -334,6 +356,49 @@ export default function SettingsPage() {
               label="Auto-analyze new articles"
               hint='When enabled, every article pulled by the scheduled fetch is sent through the AI for analysis (capped to prevent runaway token usage). Turn off to fetch news only — you can still analyze articles manually.'
             />
+
+            <div className="border-t border-[#1e2433] pt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles size={13} className="text-teal-400" />
+                <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Auto-tag on fetch</p>
+                {savingAutoTag && <Loader2 size={11} className="animate-spin text-teal-400 ml-auto" />}
+              </div>
+              <p className="text-[10px] text-slate-500 mb-3">
+                When a new article is fetched in the selected categories, AI automatically extracts English topic tags from it — even if the article is in another language.
+                Applies a cap of 20 articles per fetch cycle to control token usage.
+              </p>
+              {allCategories.length === 0 ? (
+                <p className="text-[10px] text-slate-600 italic">No article categories found yet — add RSS feeds first.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {allCategories.map(cat => {
+                    const on = autoTagCategories.includes(cat)
+                    return (
+                      <button
+                        key={cat}
+                        onClick={() => toggleAutoTagCategory(cat)}
+                        disabled={savingAutoTag}
+                        className={clsx(
+                          'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors disabled:opacity-60',
+                          on
+                            ? 'bg-teal-500/15 border-teal-500/40 text-teal-300 hover:bg-teal-500/25'
+                            : 'bg-[#0a0f1e] border-[#1e2433] text-slate-500 hover:border-[#2d3148] hover:text-slate-300',
+                        )}
+                      >
+                        <Tag size={10} className={on ? 'text-teal-400' : 'text-slate-600'} />
+                        {cat.replace(/_/g, ' ')}
+                        {on && <span className="ml-0.5 w-1.5 h-1.5 rounded-full bg-teal-400 inline-block" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+              {autoTagCategories.length > 0 && (
+                <p className="text-[10px] text-teal-600 mt-2">
+                  {autoTagCategories.length} categor{autoTagCategories.length === 1 ? 'y' : 'ies'} enabled
+                </p>
+              )}
+            </div>
 
             <div className="border-t border-[#1e2433] pt-4">
               <div className="flex items-center gap-2 mb-3">

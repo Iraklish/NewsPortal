@@ -1,9 +1,12 @@
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
+from typing import List
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..config import DEFAULT_ASK_SYSTEM_PROMPT, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT, settings
@@ -218,6 +221,31 @@ async def list_models(
             raise HTTPException(status_code=502, detail=f"Custom endpoint error: {exc}")
 
     raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+
+
+class AutoTagCategoriesIn(BaseModel):
+    categories: List[str]
+
+
+@router.get("/auto-tag-categories")
+def get_auto_tag_categories(db: Session = Depends(get_db)):
+    """Return the list of categories that have automatic AI tagging enabled on fetch."""
+    raw = _db_get(db, "auto_tag_categories")
+    if not raw:
+        return {"categories": []}
+    try:
+        cats = json.loads(raw)
+        return {"categories": cats if isinstance(cats, list) else []}
+    except Exception:
+        return {"categories": []}
+
+
+@router.put("/auto-tag-categories")
+def set_auto_tag_categories(body: AutoTagCategoriesIn, db: Session = Depends(get_db)):
+    """Save the list of categories that should be auto-tagged when articles are fetched."""
+    _set_db(db, "auto_tag_categories", json.dumps(body.categories))
+    db.commit()
+    return {"categories": body.categories}
 
 
 _RESETTABLE_KEYS = {

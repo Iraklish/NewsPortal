@@ -517,6 +517,18 @@ export const settingsApi = {
       method: 'DELETE',
     })
   },
+
+  getAutoTagCategories() {
+    return request<{ categories: string[] }>('/settings/auto-tag-categories')
+  },
+
+  setAutoTagCategories(categories: string[]) {
+    return request<{ categories: string[] }>('/settings/auto-tag-categories', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categories }),
+    })
+  },
 }
 
 // ─── Sources ──────────────────────────────────────────────────────────────────
