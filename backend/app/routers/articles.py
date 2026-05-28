@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import json
@@ -328,6 +329,31 @@ async def bulk_auto_tag(
         except Exception:
             errors += 1
     return {"tagged": tagged, "errors": errors, "total": len(articles)}
+
+
+class AutoTagByIdsIn(BaseModel):
+    ids: list[int]
+
+
+@router.post("/auto-tag-by-ids")
+async def auto_tag_by_ids(body: AutoTagByIdsIn, db: Session = Depends(get_db)):
+    """Force-tag a specific list of articles by ID (overwrites any existing tags)."""
+    from ..services.tagger import ai_extract_tags
+    tagged = errors = 0
+    for art_id in body.ids:
+        article = db.query(Article).filter(Article.id == art_id).first()
+        if not article:
+            continue
+        try:
+            article.tags = await ai_extract_tags(article, db)
+            db.commit()
+            tagged += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            db.rollback()
+            errors += 1
+    return {"tagged": tagged, "errors": errors, "total": len(body.ids)}
 
 
 @router.get("/{article_id}", response_model=ArticleOut)

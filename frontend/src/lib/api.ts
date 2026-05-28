@@ -412,6 +412,17 @@ export const articlesApi = {
       { method: 'POST' },
     )
   },
+
+  autoTagByIds(ids: number[]) {
+    return request<{ tagged: number; errors: number; total: number }>(
+      '/articles/auto-tag-by-ids',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      },
+    )
+  },
 }
 
 // ─── Analysis ─────────────────────────────────────────────────────────────────

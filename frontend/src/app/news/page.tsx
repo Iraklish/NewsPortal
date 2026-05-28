@@ -13,6 +13,7 @@ import MessageContent from '@/components/MessageContent'
 import {
   RefreshCw, Search, X, ExternalLink, Loader2, Sparkles,
   Send, ChevronDown, Clock, Plus, BookOpen, Globe, Maximize2, Minimize2,
+  CheckSquare, Square, Tag,
 } from 'lucide-react'
 import clsx from 'clsx'
 import AddArticleModal from '@/components/AddArticleModal'
@@ -78,6 +79,9 @@ export default function NewsPage() {
   const [adding, setAdding] = useState(false)
   const [totalCount, setTotalCount] = useState<number | null>(null)
   const [status, setStatus] = useState<{ last_fetch_at?: string | null; next_fetch_at?: string | null; ok: number; total: number; enabled: number } | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [bulkTagging, setBulkTagging] = useState(false)
+  const [bulkTagMsg, setBulkTagMsg] = useState('')
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -144,6 +148,32 @@ export default function NewsPage() {
     } finally {
       setRefreshing(false)
       setTimeout(() => setRefreshMsg(''), 5000)
+    }
+  }
+
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  async function bulkAutoTagSelected() {
+    if (selectedIds.size === 0) return
+    setBulkTagging(true)
+    setBulkTagMsg('')
+    try {
+      const res = await articlesApi.autoTagByIds(Array.from(selectedIds))
+      setBulkTagMsg(`Tagged ${res.tagged} article${res.tagged === 1 ? '' : 's'}${res.errors ? ` (${res.errors} errors)` : ''}`)
+      setSelectedIds(new Set())
+      await load()
+      reloadTags()
+    } catch (e: unknown) {
+      setBulkTagMsg('Error: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setBulkTagging(false)
+      setTimeout(() => setBulkTagMsg(''), 5000)
     }
   }
 
@@ -249,6 +279,41 @@ export default function NewsPage() {
         </select>
       </div>
 
+      {/* Selection action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 mb-3 bg-teal-500/10 border border-teal-500/30 rounded-lg flex-wrap">
+          <Tag size={12} className="text-teal-400 flex-shrink-0" />
+          <span className="text-xs font-semibold text-teal-300 flex-shrink-0">
+            {selectedIds.size} selected
+          </span>
+          <button
+            onClick={() => setSelectedIds(new Set(articles.map(a => a.id)))}
+            className="text-xs text-slate-400 hover:text-white underline underline-offset-2 flex-shrink-0"
+          >
+            All visible ({articles.length})
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="text-xs text-slate-500 hover:text-white flex-shrink-0"
+          >
+            <X size={12} />
+          </button>
+          <div className="flex-1" />
+          {bulkTagMsg && <span className="text-xs text-teal-400 flex-shrink-0">{bulkTagMsg}</span>}
+          <button
+            onClick={bulkAutoTagSelected}
+            disabled={bulkTagging}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600/20 hover:bg-teal-600/40 disabled:opacity-50 border border-teal-500/30 rounded text-xs text-teal-300 font-medium transition-colors flex-shrink-0"
+          >
+            {bulkTagging ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+            Auto-tag selected
+          </button>
+        </div>
+      )}
+      {!selectedIds.size && bulkTagMsg && (
+        <p className="text-xs text-teal-400 mb-3">{bulkTagMsg}</p>
+      )}
+
       {/* List */}
       {loading ? (
         <div className="space-y-3">
@@ -263,7 +328,13 @@ export default function NewsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {articles.map(a => (
-            <ArticleCard key={a.id} article={a} onClick={() => setSelected(a)} />
+            <ArticleCard
+              key={a.id}
+              article={a}
+              onClick={() => setSelected(a)}
+              selected={selectedIds.has(a.id)}
+              onSelect={toggleSelect}
+            />
           ))}
         </div>
       )}
@@ -286,46 +357,76 @@ export default function NewsPage() {
   )
 }
 
-function ArticleCard({ article, onClick }: { article: Article; onClick: () => void }) {
+function ArticleCard({
+  article, onClick, selected, onSelect,
+}: {
+  article: Article
+  onClick: () => void
+  selected?: boolean
+  onSelect?: (id: number) => void
+}) {
   return (
-    <button
-      onClick={onClick}
-      className="text-left bg-[#0d1117] border border-[#1e2433] hover:border-indigo-500/40 rounded-xl p-4 transition-colors flex gap-3"
-    >
-      {article.image_url && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={article.image_url}
-          alt=""
-          className="w-20 h-20 object-cover rounded-lg flex-shrink-0"
-          onError={e => (e.currentTarget.style.display = 'none')}
-        />
+    <div
+      className={clsx(
+        'relative group text-left bg-[#0d1117] border rounded-xl p-4 transition-colors flex gap-3',
+        selected
+          ? 'border-teal-500/50 bg-teal-500/[0.04]'
+          : 'border-[#1e2433] hover:border-indigo-500/40',
       )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-          {article.category && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded uppercase tracking-wider">{article.category}</span>
-          )}
-          {article.is_analyzed && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded">analyzed</span>
-          )}
-          <span className="text-[10px] text-slate-600">{article.source}</span>
-        </div>
-        <h3 className="text-sm font-semibold text-white leading-snug line-clamp-2 mb-1">{article.title}</h3>
-        {article.summary && (
-          <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{stripHtml(article.summary)}</p>
+    >
+      {/* Selection checkbox — top-right, visible on hover or when selected */}
+      <button
+        onClick={e => { e.stopPropagation(); onSelect?.(article.id) }}
+        title={selected ? 'Deselect' : 'Select for bulk action'}
+        className={clsx(
+          'absolute top-2.5 right-2.5 z-10 w-5 h-5 rounded border flex items-center justify-center transition-all',
+          selected
+            ? 'bg-teal-500 border-teal-500 opacity-100'
+            : 'bg-[#0d1117] border-slate-600/60 opacity-0 group-hover:opacity-100',
         )}
-        {article.tags && article.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-1.5">
-            {article.tags.slice(0, 4).map(t => (
-              <span key={t} className="text-[9px] px-1.5 py-0 bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded-full leading-5">{t}</span>
-            ))}
-            {article.tags.length > 4 && <span className="text-[9px] text-slate-600 leading-5">+{article.tags.length - 4}</span>}
+      >
+        {selected
+          ? <CheckSquare size={13} className="text-white" />
+          : <Square size={13} className="text-slate-500" />}
+      </button>
+
+      {/* Clickable card body */}
+      <div className="flex gap-3 flex-1 min-w-0 cursor-pointer" onClick={onClick}>
+        {article.image_url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={article.image_url}
+            alt=""
+            className="w-20 h-20 object-cover rounded-lg flex-shrink-0"
+            onError={e => (e.currentTarget.style.display = 'none')}
+          />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+            {article.category && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded uppercase tracking-wider">{article.category}</span>
+            )}
+            {article.is_analyzed && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded">analyzed</span>
+            )}
+            <span className="text-[10px] text-slate-600">{article.source}</span>
           </div>
-        )}
-        <p className="text-[10px] text-slate-600 mt-1.5">{fmtDate(article.published_at || article.fetched_at)}</p>
+          <h3 className="text-sm font-semibold text-white leading-snug line-clamp-2 mb-1">{article.title}</h3>
+          {article.summary && (
+            <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{stripHtml(article.summary)}</p>
+          )}
+          {article.tags && article.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {article.tags.slice(0, 4).map(t => (
+                <span key={t} className="text-[9px] px-1.5 py-0 bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded-full leading-5">{t}</span>
+              ))}
+              {article.tags.length > 4 && <span className="text-[9px] text-slate-600 leading-5">+{article.tags.length - 4}</span>}
+            </div>
+          )}
+          <p className="text-[10px] text-slate-600 mt-1.5">{fmtDate(article.published_at || article.fetched_at)}</p>
+        </div>
       </div>
-    </button>
+    </div>
   )
 }
 
