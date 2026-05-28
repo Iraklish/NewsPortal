@@ -13,7 +13,7 @@ import MessageContent from '@/components/MessageContent'
 import {
   RefreshCw, Search, X, ExternalLink, Loader2, Sparkles,
   Send, ChevronDown, Clock, Plus, BookOpen, Globe, Maximize2, Minimize2,
-  CheckSquare, Square, Tag,
+  CheckSquare, Square, Tag, LayoutGrid, Rows3,
 } from 'lucide-react'
 import clsx from 'clsx'
 import AddArticleModal from '@/components/AddArticleModal'
@@ -83,6 +83,30 @@ export default function NewsPage() {
   const [bulkTagging, setBulkTagging] = useState(false)
   const [bulkTagMsg, setBulkTagMsg] = useState('')
 
+  // Grid / limit settings — persisted to localStorage
+  const [gridCols, setGridColsRaw] = useState<number>(() => {
+    if (typeof window === 'undefined') return 2
+    const v = parseInt(localStorage.getItem('news_grid_cols') || '2', 10)
+    return [1, 2, 3, 4].includes(v) ? v : 2
+  })
+  const [gridRows, setGridRowsRaw] = useState<number>(() => {
+    if (typeof window === 'undefined') return 10
+    const v = parseInt(localStorage.getItem('news_grid_rows') || '10', 10)
+    return [5, 10, 20, 50].includes(v) ? v : 10
+  })
+
+  function setGridCols(n: number) {
+    setGridColsRaw(n)
+    if (typeof window !== 'undefined') localStorage.setItem('news_grid_cols', String(n))
+    load({ limit: n * gridRows })
+  }
+
+  function setGridRows(n: number) {
+    setGridRowsRaw(n)
+    if (typeof window !== 'undefined') localStorage.setItem('news_grid_rows', String(n))
+    load({ limit: gridCols * n })
+  }
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function reloadTags() {
@@ -93,14 +117,15 @@ export default function NewsPage() {
     try { setStatus(await sourcesApi.status()) } catch {}
   }
 
-  async function load(params?: { category?: string; q?: string; tag?: string }) {
+  async function load(params?: { category?: string; q?: string; tag?: string; limit?: number }) {
     setLoading(true)
     const effCategory = params?.category ?? category
     const effQuery = params?.q ?? query
     const effTag = params?.tag !== undefined ? params.tag : tag
+    const effLimit = params?.limit ?? (gridCols * gridRows)
     try {
       const [data, countRes] = await Promise.all([
-        articlesApi.list({ limit: 100, category: effCategory, q: effQuery, tag: effTag }),
+        articlesApi.list({ limit: effLimit, category: effCategory, q: effQuery, tag: effTag }),
         articlesApi.count({ category: effCategory, q: effQuery, tag: effTag }),
       ])
       setArticles(data)
@@ -279,6 +304,55 @@ export default function NewsPage() {
         </select>
       </div>
 
+      {/* Grid / limit controls */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        {/* Columns */}
+        <div className="flex items-center gap-1.5">
+          <LayoutGrid size={12} className="text-slate-500 flex-shrink-0" />
+          <span className="text-[11px] text-slate-500 font-medium mr-0.5">Columns</span>
+          {[1, 2, 3, 4].map(n => (
+            <button
+              key={n}
+              onClick={() => setGridCols(n)}
+              className={clsx(
+                'w-7 h-7 rounded border text-xs font-medium transition-colors',
+                gridCols === n
+                  ? 'bg-indigo-600 border-indigo-500 text-white'
+                  : 'bg-[#0d1117] border-[#1e2433] text-slate-400 hover:border-indigo-500/50 hover:text-white',
+              )}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+
+        <div className="w-px h-5 bg-[#1e2433] self-center flex-shrink-0" />
+
+        {/* Rows */}
+        <div className="flex items-center gap-1.5">
+          <Rows3 size={12} className="text-slate-500 flex-shrink-0" />
+          <span className="text-[11px] text-slate-500 font-medium mr-0.5">Rows</span>
+          {[5, 10, 20, 50].map(n => (
+            <button
+              key={n}
+              onClick={() => setGridRows(n)}
+              className={clsx(
+                'min-w-[28px] h-7 px-2 rounded border text-xs font-medium transition-colors',
+                gridRows === n
+                  ? 'bg-indigo-600 border-indigo-500 text-white'
+                  : 'bg-[#0d1117] border-[#1e2433] text-slate-400 hover:border-indigo-500/50 hover:text-white',
+              )}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+
+        <span className="text-[11px] text-slate-600 flex-shrink-0">
+          = {gridCols * gridRows} per load
+        </span>
+      </div>
+
       {/* Selection action bar */}
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-2 px-3 py-2 mb-3 bg-teal-500/10 border border-teal-500/30 rounded-lg flex-wrap">
@@ -326,7 +400,13 @@ export default function NewsPage() {
           <p className="text-lg">No articles match these filters.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className={clsx(
+          'grid gap-3',
+          gridCols === 1 && 'grid-cols-1',
+          gridCols === 2 && 'grid-cols-1 sm:grid-cols-2',
+          gridCols === 3 && 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
+          gridCols === 4 && 'grid-cols-2 lg:grid-cols-4',
+        )}>
           {articles.map(a => (
             <ArticleCard
               key={a.id}
