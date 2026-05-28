@@ -12,7 +12,7 @@ import ImpactBadge from '@/components/ImpactBadge'
 import MessageContent from '@/components/MessageContent'
 import {
   RefreshCw, Search, X, ExternalLink, Loader2, Sparkles,
-  Send, ChevronDown, Clock, Plus, BookOpen, Globe, Maximize2, Minimize2,
+  Send, ChevronDown, ChevronLeft, ChevronRight, Clock, Plus, BookOpen, Globe, Maximize2, Minimize2,
   CheckSquare, Square, Tag, LayoutGrid, Rows3,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -85,6 +85,7 @@ export default function NewsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [bulkTagging, setBulkTagging] = useState(false)
   const [bulkTagMsg, setBulkTagMsg] = useState('')
+  const [page, setPage] = useState(0)
 
   // Grid / limit settings — persisted to localStorage
   const [gridCols, setGridColsRaw] = useState<number>(() => {
@@ -101,13 +102,15 @@ export default function NewsPage() {
   function setGridCols(n: number) {
     setGridColsRaw(n)
     if (typeof window !== 'undefined') localStorage.setItem('news_grid_cols', String(n))
-    load({ limit: n * gridRows })
+    setPage(0)
+    load({ limit: n * gridRows, page: 0 })
   }
 
   function setGridRows(n: number) {
     setGridRowsRaw(n)
     if (typeof window !== 'undefined') localStorage.setItem('news_grid_rows', String(n))
-    load({ limit: gridCols * n })
+    setPage(0)
+    load({ limit: gridCols * n, page: 0 })
   }
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -120,17 +123,19 @@ export default function NewsPage() {
     try { setStatus(await sourcesApi.status()) } catch {}
   }
 
-  async function load(params?: { category?: string; q?: string; tag?: string; limit?: number }) {
+  async function load(params?: { category?: string; q?: string; tag?: string; limit?: number; page?: number }) {
     setLoading(true)
     const effCategory = params?.category ?? category
     const effQuery = params?.q ?? query
     const effTag = params?.tag !== undefined ? params.tag : tag
     const effLimit = params?.limit ?? (gridCols * gridRows)
+    const effPage = params?.page !== undefined ? params.page : page
+    const skip = effPage * effLimit
     const isUntagged = effTag === TAG_NONE
     try {
       const [data, countRes] = await Promise.all([
         articlesApi.list({
-          limit: effLimit, category: effCategory, q: effQuery,
+          skip, limit: effLimit, category: effCategory, q: effQuery,
           tag: isUntagged ? undefined : effTag,
           untagged: isUntagged || undefined,
         }),
@@ -147,6 +152,12 @@ export default function NewsPage() {
     }
   }
 
+  function goToPage(n: number) {
+    setPage(n)
+    load({ page: n })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   useEffect(() => {
     articlesApi.categories().then(setCategories).catch(() => {})
     reloadTags()
@@ -156,29 +167,35 @@ export default function NewsPage() {
     return () => clearInterval(id)
   }, [])
 
-  // Debounced search
+  // Debounced search — always resets to page 0
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => load({ q: query }), 350)
+    debounceRef.current = setTimeout(() => {
+      setPage(0)
+      load({ q: query, page: 0 })
+    }, 350)
   }, [query])
 
   function pickCategory(c: string) {
     setCategory(c)
-    load({ category: c, q: query, tag })
+    setPage(0)
+    load({ category: c, q: query, tag, page: 0 })
   }
 
   function pickTag(t: string) {
     setTag(t)
-    load({ tag: t, category, q: query })
+    setPage(0)
+    load({ tag: t, category, q: query, page: 0 })
   }
 
   async function refreshFeeds() {
     setRefreshing(true)
     setRefreshMsg('')
+    setPage(0)
     try {
       const res = await articlesApi.fetchAll()
       setRefreshMsg(`Fetched ${res.fetched} new articles`)
-      await load()
+      await load({ page: 0 })
       await loadStatus()
     } catch (e: unknown) {
       setRefreshMsg('Fetch failed: ' + (e instanceof Error ? e.message : String(e)))
@@ -248,8 +265,12 @@ export default function NewsPage() {
           </h1>
           <p className="text-slate-500 text-sm mt-1">
             Live feed from {categories.length || 6} categories
-            {totalCount != null && articles.length < totalCount && (
-              <> · showing {articles.length} of {totalCount.toLocaleString()}</>
+            {totalCount != null && totalCount > gridCols * gridRows && (
+              <>
+                {' · '}
+                {(page * gridCols * gridRows + 1).toLocaleString()}–{Math.min((page + 1) * gridCols * gridRows, totalCount).toLocaleString()}
+                {' of '}{totalCount.toLocaleString()}
+              </>
             )}
             . Click any article to analyze or ask a question.
           </p>
@@ -353,7 +374,7 @@ export default function NewsPage() {
         </div>
 
         <span className="text-[11px] text-slate-600 flex-shrink-0">
-          = {gridCols * gridRows} per load
+          = {gridCols * gridRows} per page
         </span>
       </div>
 
@@ -420,6 +441,64 @@ export default function NewsPage() {
               onSelect={toggleSelect}
             />
           ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {!loading && totalCount != null && totalCount > gridCols * gridRows && (
+        <div className="flex items-center justify-center gap-3 mt-6">
+          <button
+            onClick={() => goToPage(page - 1)}
+            disabled={page === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] border border-[#1e2433] hover:border-indigo-500/50 rounded-lg text-sm text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronLeft size={14} />
+            Prev
+          </button>
+
+          {/* Page number pills */}
+          <div className="flex items-center gap-1">
+            {(() => {
+              const total = Math.ceil(totalCount / (gridCols * gridRows))
+              const pages: (number | '…')[] = []
+              if (total <= 7) {
+                for (let i = 0; i < total; i++) pages.push(i)
+              } else {
+                pages.push(0)
+                if (page > 2) pages.push('…')
+                for (let i = Math.max(1, page - 1); i <= Math.min(total - 2, page + 1); i++) pages.push(i)
+                if (page < total - 3) pages.push('…')
+                pages.push(total - 1)
+              }
+              return pages.map((p, i) =>
+                p === '…' ? (
+                  <span key={`e${i}`} className="w-7 text-center text-slate-600 text-xs">…</span>
+                ) : (
+                  <button
+                    key={p}
+                    onClick={() => goToPage(p as number)}
+                    className={clsx(
+                      'w-7 h-7 rounded border text-xs font-medium transition-colors',
+                      page === p
+                        ? 'bg-indigo-600 border-indigo-500 text-white'
+                        : 'bg-[#0d1117] border-[#1e2433] text-slate-400 hover:border-indigo-500/50 hover:text-white',
+                    )}
+                  >
+                    {(p as number) + 1}
+                  </button>
+                )
+              )
+            })()}
+          </div>
+
+          <button
+            onClick={() => goToPage(page + 1)}
+            disabled={(page + 1) * (gridCols * gridRows) >= totalCount}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] border border-[#1e2433] hover:border-indigo-500/50 rounded-lg text-sm text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            Next
+            <ChevronRight size={14} />
+          </button>
         </div>
       )}
 
