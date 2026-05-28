@@ -87,28 +87,20 @@ export default function NewsPage() {
   const [bulkTagMsg, setBulkTagMsg] = useState('')
   const [page, setPage] = useState(0)
 
-  // Grid / limit settings — persisted to localStorage
-  const [gridCols, setGridColsRaw] = useState<number>(() => {
-    if (typeof window === 'undefined') return 2
-    const v = parseInt(localStorage.getItem('news_grid_cols') || '2', 10)
-    return [1, 2, 3, 4].includes(v) ? v : 2
-  })
-  const [gridRows, setGridRowsRaw] = useState<number>(() => {
-    if (typeof window === 'undefined') return 10
-    const v = parseInt(localStorage.getItem('news_grid_rows') || '10', 10)
-    return [5, 10, 20, 50].includes(v) ? v : 10
-  })
+  // Grid / limit settings — start with SSR-safe defaults; localStorage applied after mount
+  const [gridCols, setGridColsRaw] = useState<number>(2)
+  const [gridRows, setGridRowsRaw] = useState<number>(10)
 
   function setGridCols(n: number) {
     setGridColsRaw(n)
-    if (typeof window !== 'undefined') localStorage.setItem('news_grid_cols', String(n))
+    localStorage.setItem('news_grid_cols', String(n))
     setPage(0)
     load({ limit: n * gridRows, page: 0 })
   }
 
   function setGridRows(n: number) {
     setGridRowsRaw(n)
-    if (typeof window !== 'undefined') localStorage.setItem('news_grid_rows', String(n))
+    localStorage.setItem('news_grid_rows', String(n))
     setPage(0)
     load({ limit: gridCols * n, page: 0 })
   }
@@ -159,11 +151,19 @@ export default function NewsPage() {
   }
 
   useEffect(() => {
+    // Read persisted grid settings client-side (avoids SSR/hydration mismatch)
+    const savedCols = parseInt(localStorage.getItem('news_grid_cols') || '2', 10)
+    const savedRows = parseInt(localStorage.getItem('news_grid_rows') || '10', 10)
+    const cols = [1, 2, 3, 4].includes(savedCols) ? savedCols : 2
+    const rows = [5, 10, 20, 50].includes(savedRows) ? savedRows : 10
+    setGridColsRaw(cols)
+    setGridRowsRaw(rows)
+
     articlesApi.categories().then(setCategories).catch(() => {})
     reloadTags()
-    load()
+    load({ limit: cols * rows })  // pass explicit limit — state update is async
     loadStatus()
-    const id = setInterval(loadStatus, 30000)  // refresh every 30s
+    const id = setInterval(loadStatus, 30000)
     return () => clearInterval(id)
   }, [])
 
