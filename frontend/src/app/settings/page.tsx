@@ -37,6 +37,23 @@ export default function SettingsPage() {
   const [allCategories, setAllCategories] = useState<string[]>([])
   const [savingAutoTag, setSavingAutoTag] = useState(false)
 
+  const ALL_SECTIONS = ['ai', 'prompts', 'datasources', 'news'] as const
+  type SectionId = typeof ALL_SECTIONS[number]
+  const [collapsedSections, setCollapsedSections] = useState<Set<SectionId>>(
+    () => new Set<SectionId>(ALL_SECTIONS)
+  )
+  const allCollapsed = ALL_SECTIONS.every(s => collapsedSections.has(s))
+
+  function toggleSection(id: SectionId) {
+    setCollapsedSections(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  function expandAll() { setCollapsedSections(new Set()) }
+  function collapseAll() { setCollapsedSections(new Set<SectionId>(ALL_SECTIONS)) }
+
   useEffect(() => {
     settingsApi.get().then(s => {
       setSettings(s)
@@ -149,14 +166,26 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-bold text-white">Settings</h1>
           <p className="text-slate-500 text-sm mt-1">Configure AI providers, API keys, and data sources</p>
         </div>
-        <button
-          onClick={save}
-          disabled={saving}
-          className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium transition-colors"
-        >
-          <Save size={14} />
-          {saving ? 'Saving…' : 'Save All'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={allCollapsed ? expandAll : collapseAll}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+            title={allCollapsed ? 'Expand all sections' : 'Collapse all sections'}
+          >
+            {allCollapsed
+              ? <><ChevronDown size={13} />Expand all</>
+              : <><ChevronRight size={13} />Collapse all</>
+            }
+          </button>
+          <button
+            onClick={save}
+            disabled={saving}
+            className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium transition-colors"
+          >
+            <Save size={14} />
+            {saving ? 'Saving…' : 'Save All'}
+          </button>
+        </div>
       </div>
 
       {toast && (
@@ -170,183 +199,207 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <div className="space-y-8">
+      <div className="space-y-3">
         {/* ─────────  AI & PROVIDERS  ───────── */}
-        <Section icon={Cpu} label="AI & Providers" description="Choose your default model and configure provider credentials" />
-
-        {/* AI Provider */}
-        <Card title="AI Provider">
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Default Provider">
-              <select
-                value={form.default_ai_provider || ''}
-                onChange={e => {
-                  set('default_ai_provider', e.target.value)
-                  if (!form.default_ai_model) set('default_ai_model', DEFAULT_MODELS[e.target.value] || '')
-                }}
-                className="input"
-              >
-                {AI_PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-            </Field>
-            <Field label="Default Model">
-              <div className="flex gap-2">
-                <input
-                  value={form.default_ai_model || ''}
-                  onChange={e => set('default_ai_model', e.target.value)}
-                  placeholder="e.g. claude-sonnet-4-6"
-                  className="input"
-                  list="available-models-list"
-                />
-                <datalist id="available-models-list">
-                  {availableModels.map(m => <option key={m} value={m} />)}
-                </datalist>
-                <button
-                  type="button"
-                  onClick={fetchModels}
-                  disabled={loadingModels}
-                  title="Fetch available models from the provider"
-                  className="px-3 py-2 bg-[#1e2433] hover:bg-[#2d3148] disabled:opacity-50 rounded-lg text-xs text-slate-300 hover:text-white transition-colors flex items-center gap-1.5 whitespace-nowrap"
-                >
-                  {loadingModels ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                  {availableModels.length > 0 ? `${availableModels.length} models` : 'Fetch'}
-                </button>
-              </div>
-              {modelsError && <p className="text-[10px] text-red-400 mt-1">{modelsError}</p>}
-              {availableModels.length > 0 && (
+        <CollapsibleSection
+          icon={Cpu}
+          label="AI & Providers"
+          description="Choose your default model and configure provider credentials"
+          collapsed={collapsedSections.has('ai')}
+          onToggle={() => toggleSection('ai')}
+        >
+          {/* AI Provider */}
+          <Card title="AI Provider">
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Default Provider">
                 <select
-                  value=""
-                  onChange={e => e.target.value && set('default_ai_model', e.target.value)}
-                  className="input mt-2 text-xs"
+                  value={form.default_ai_provider || ''}
+                  onChange={e => {
+                    set('default_ai_provider', e.target.value)
+                    if (!form.default_ai_model) set('default_ai_model', DEFAULT_MODELS[e.target.value] || '')
+                  }}
+                  className="input"
                 >
-                  <option value="">— pick from list —</option>
-                  {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  {AI_PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
-              )}
-            </Field>
-          </div>
-        </Card>
+              </Field>
+              <Field label="Default Model">
+                <div className="flex gap-2">
+                  <input
+                    value={form.default_ai_model || ''}
+                    onChange={e => set('default_ai_model', e.target.value)}
+                    placeholder="e.g. claude-sonnet-4-6"
+                    className="input"
+                    list="available-models-list"
+                  />
+                  <datalist id="available-models-list">
+                    {availableModels.map(m => <option key={m} value={m} />)}
+                  </datalist>
+                  <button
+                    type="button"
+                    onClick={fetchModels}
+                    disabled={loadingModels}
+                    title="Fetch available models from the provider"
+                    className="px-3 py-2 bg-[#1e2433] hover:bg-[#2d3148] disabled:opacity-50 rounded-lg text-xs text-slate-300 hover:text-white transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                  >
+                    {loadingModels ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    {availableModels.length > 0 ? `${availableModels.length} models` : 'Fetch'}
+                  </button>
+                </div>
+                {modelsError && <p className="text-[10px] text-red-400 mt-1">{modelsError}</p>}
+                {availableModels.length > 0 && (
+                  <select
+                    value=""
+                    onChange={e => e.target.value && set('default_ai_model', e.target.value)}
+                    className="input mt-2 text-xs"
+                  >
+                    <option value="">— pick from list —</option>
+                    {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                )}
+              </Field>
+            </div>
+          </Card>
 
-        {/* API Keys */}
-        <Card title="API Keys">
-          <div className="space-y-3">
-            <KeyRow label="Anthropic" field="anthropic_api_key" hasKey={settings?.anthropic_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            <KeyRow label="OpenAI" field="openai_api_key" hasKey={settings?.openai_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            <KeyRow label="Google Gemini" field="gemini_api_key" hasKey={settings?.gemini_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            <KeyRow label="DeepSeek" field="deepseek_api_key" hasKey={settings?.deepseek_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-          </div>
-        </Card>
+          {/* API Keys */}
+          <Card title="API Keys">
+            <div className="space-y-3">
+              <KeyRow label="Anthropic" field="anthropic_api_key" hasKey={settings?.anthropic_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+              <KeyRow label="OpenAI" field="openai_api_key" hasKey={settings?.openai_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+              <KeyRow label="Google Gemini" field="gemini_api_key" hasKey={settings?.gemini_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+              <KeyRow label="DeepSeek" field="deepseek_api_key" hasKey={settings?.deepseek_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+            </div>
+          </Card>
 
-        {/* Custom AI */}
-        <Card title="Custom AI (OpenAI-compatible)">
-          <div className="space-y-3">
-            <Field label="Endpoint URL">
-              <input value={form.custom_ai_endpoint || ''} onChange={e => set('custom_ai_endpoint', e.target.value)} placeholder="https://your-endpoint/v1" className="input" />
-            </Field>
-            <Field label="Model ID">
-              <input value={form.custom_ai_model || ''} onChange={e => set('custom_ai_model', e.target.value)} placeholder="model-name" className="input" />
-            </Field>
-            <KeyRow label="API Key" field="custom_ai_api_key" hasKey={settings?.custom_ai_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-          </div>
-        </Card>
+          {/* Custom AI */}
+          <Card title="Custom AI (OpenAI-compatible)">
+            <div className="space-y-3">
+              <Field label="Endpoint URL">
+                <input value={form.custom_ai_endpoint || ''} onChange={e => set('custom_ai_endpoint', e.target.value)} placeholder="https://your-endpoint/v1" className="input" />
+              </Field>
+              <Field label="Model ID">
+                <input value={form.custom_ai_model || ''} onChange={e => set('custom_ai_model', e.target.value)} placeholder="model-name" className="input" />
+              </Field>
+              <KeyRow label="API Key" field="custom_ai_api_key" hasKey={settings?.custom_ai_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+            </div>
+          </Card>
+        </CollapsibleSection>
 
         {/* ─────────  AI CHAT & PROMPTS  ───────── */}
-        <Section icon={MessageSquare} label="AI Chat & Prompts" description="Customize the system prompts used by the chat panel and per-article ask feature" />
-
-        <Card title="System Prompts">
-          <p className="text-xs text-slate-500 mb-4">
-            Override how the AI behaves. Save an empty value (or click Reset) to fall back to the built-in default.
-          </p>
-          <div className="space-y-5">
-            <PromptField
-              label="AI Chat panel (general)"
-              hint="Used by the floating chat panel; receives recent analyses as context."
-              fieldKey="chat_system_prompt"
-              form={form}
-              set={set}
-              defaultValue={settings?.chat_system_prompt_default || ''}
-              customized={settings?.chat_system_prompt_customized || false}
-              onReset={() => resetKey('chat_system_prompt')}
-            />
-            <PromptField
-              label="Ask about an article"
-              hint="Used by the per-article Ask feature on the News page; receives the article text + prior analyses."
-              fieldKey="ask_system_prompt"
-              form={form}
-              set={set}
-              defaultValue={settings?.ask_system_prompt_default || ''}
-              customized={settings?.ask_system_prompt_customized || false}
-              onReset={() => resetKey('ask_system_prompt')}
-            />
-            <PromptField
-              label="Analysis & Prognosis report"
-              hint="System prompt for the directed report synthesiser (Analysis page). Defines the analyst persona and output constraints."
-              fieldKey="directed_report_system_prompt"
-              form={form}
-              set={set}
-              defaultValue={settings?.directed_report_system_prompt_default || ''}
-              customized={settings?.directed_report_system_prompt_customized || false}
-              onReset={() => resetKey('directed_report_system_prompt')}
-            />
-          </div>
-        </Card>
+        <CollapsibleSection
+          icon={MessageSquare}
+          label="AI Chat & Prompts"
+          description="Customize the system prompts used by the chat panel and per-article ask feature"
+          collapsed={collapsedSections.has('prompts')}
+          onToggle={() => toggleSection('prompts')}
+        >
+          <Card title="System Prompts">
+            <p className="text-xs text-slate-500 mb-4">
+              Override how the AI behaves. Save an empty value (or click Reset) to fall back to the built-in default.
+            </p>
+            <div className="space-y-5">
+              <PromptField
+                label="AI Chat panel (general)"
+                hint="Used by the floating chat panel; receives recent analyses as context."
+                fieldKey="chat_system_prompt"
+                form={form}
+                set={set}
+                defaultValue={settings?.chat_system_prompt_default || ''}
+                customized={settings?.chat_system_prompt_customized || false}
+                onReset={() => resetKey('chat_system_prompt')}
+              />
+              <PromptField
+                label="Ask about an article"
+                hint="Used by the per-article Ask feature on the News page; receives the article text + prior analyses."
+                fieldKey="ask_system_prompt"
+                form={form}
+                set={set}
+                defaultValue={settings?.ask_system_prompt_default || ''}
+                customized={settings?.ask_system_prompt_customized || false}
+                onReset={() => resetKey('ask_system_prompt')}
+              />
+              <PromptField
+                label="Analysis & Prognosis report"
+                hint="System prompt for the directed report synthesiser (Analysis page). Defines the analyst persona and output constraints."
+                fieldKey="directed_report_system_prompt"
+                form={form}
+                set={set}
+                defaultValue={settings?.directed_report_system_prompt_default || ''}
+                customized={settings?.directed_report_system_prompt_customized || false}
+                onReset={() => resetKey('directed_report_system_prompt')}
+              />
+            </div>
+          </Card>
+        </CollapsibleSection>
 
         {/* ─────────  DATA SOURCES & APIs  ───────── */}
-        <Section icon={Database} label="Data Sources & APIs" description="External API keys for news, market data, and search" />
+        <CollapsibleSection
+          icon={Database}
+          label="Data Sources & APIs"
+          description="External API keys for news, market data, and search"
+          collapsed={collapsedSections.has('datasources')}
+          onToggle={() => toggleSection('datasources')}
+        >
+          {/* News / Market Data */}
+          <Card title="News / Market Data">
+            <p className="text-xs text-slate-500 mb-3">NewsAPI key enables hourly headline fetch alongside RSS. Get one at newsapi.org.</p>
+            <div className="space-y-3">
+              <KeyRow label="NewsAPI" field="news_api_key" hasKey={settings?.news_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+              <KeyRow label="FRED (Federal Reserve)" field="fred_api_key" hasKey={settings?.fred_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+              <KeyRow label="Alpha Vantage" field="alpha_vantage_api_key" hasKey={settings?.alpha_vantage_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+              <KeyRow label="Polygon.io" field="polygon_api_key" hasKey={settings?.polygon_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+            </div>
+          </Card>
 
-        {/* Data Sources */}
-        <Card title="News / Market Data">
-          <p className="text-xs text-slate-500 mb-3">NewsAPI key enables hourly headline fetch alongside RSS. Get one at newsapi.org.</p>
-          <div className="space-y-3">
-            <KeyRow label="NewsAPI" field="news_api_key" hasKey={settings?.news_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            <KeyRow label="FRED (Federal Reserve)" field="fred_api_key" hasKey={settings?.fred_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            <KeyRow label="Alpha Vantage" field="alpha_vantage_api_key" hasKey={settings?.alpha_vantage_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            <KeyRow label="Polygon.io" field="polygon_api_key" hasKey={settings?.polygon_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-          </div>
-        </Card>
-
-        {/* Web Search APIs */}
-        <Card title="Web Search APIs">
-          <p className="text-xs text-slate-500 mb-3">
-            Used for the Web Search page and as a fallback when AI grounding returns no results.
-            DuckDuckGo and Bing HTML are tried automatically at no cost — add keys below to unlock
-            higher-quality or higher-volume search.
-          </p>
-          <div className="space-y-4">
-            <div>
-              <p className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mb-2">Google Custom Search</p>
-              <p className="text-[10px] text-slate-600 mb-2">Get keys at console.cloud.google.com and programmablesearchengine.google.com</p>
-              <div className="space-y-3">
-                <KeyRow label="Google API Key" field="google_search_api_key" hasKey={settings?.google_search_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-                <KeyRow label="Search Engine CX ID" field="google_search_cx" hasKey={settings?.google_search_cx?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+          {/* Web Search APIs */}
+          <Card title="Web Search APIs">
+            <p className="text-xs text-slate-500 mb-3">
+              Used for the Web Search page and as a fallback when AI grounding returns no results.
+              DuckDuckGo and Bing HTML are tried automatically at no cost — add keys below to unlock
+              higher-quality or higher-volume search.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <p className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mb-2">Google Custom Search</p>
+                <p className="text-[10px] text-slate-600 mb-2">Get keys at console.cloud.google.com and programmablesearchengine.google.com</p>
+                <div className="space-y-3">
+                  <KeyRow label="Google API Key" field="google_search_api_key" hasKey={settings?.google_search_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+                  <KeyRow label="Search Engine CX ID" field="google_search_cx" hasKey={settings?.google_search_cx?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+                </div>
+              </div>
+              <div className="border-t border-[#1e2433] pt-3">
+                <p className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mb-2">Bing Web Search</p>
+                <p className="text-[10px] text-slate-600 mb-2">Optional — get a free-tier key at portal.azure.com → Bing Search v7. Without a key, Bing HTML scraping is used as a fallback.</p>
+                <KeyRow label="Bing Search API Key" field="bing_search_api_key" hasKey={settings?.bing_search_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
               </div>
             </div>
-            <div className="border-t border-[#1e2433] pt-3">
-              <p className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mb-2">Bing Web Search</p>
-              <p className="text-[10px] text-slate-600 mb-2">Optional — get a free-tier key at portal.azure.com → Bing Search v7. Without a key, Bing HTML scraping is used as a fallback.</p>
-              <KeyRow label="Bing Search API Key" field="bing_search_api_key" hasKey={settings?.bing_search_api_key?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            </div>
-          </div>
-        </Card>
+          </Card>
 
-        {/* Telegram */}
-        <Card title="Telegram">
-          <p className="text-xs text-slate-500 mb-3">
-            Used to fetch messages from Telegram channels and groups on the same schedule as RSS feeds.
-            Get your credentials at <a href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">my.telegram.org/apps</a>.
-          </p>
-          <div className="space-y-2">
-            <KeyRow label="API ID" field="telegram_api_id" hasKey={settings?.telegram_api_id?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            <KeyRow label="API Hash" field="telegram_api_hash" hasKey={settings?.telegram_api_hash?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-            <KeyRow label="Phone Number" field="telegram_phone" hasKey={settings?.telegram_phone?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
-          </div>
-          <p className="text-[10px] text-slate-600 mt-3">
-            After saving credentials, go to <a href="/telegram" className="text-blue-400 hover:underline">Telegram Channels</a> to authorise the session and add channels.
-          </p>
-        </Card>
+          {/* Telegram */}
+          <Card title="Telegram">
+            <p className="text-xs text-slate-500 mb-3">
+              Used to fetch messages from Telegram channels and groups on the same schedule as RSS feeds.
+              Get your credentials at <a href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">my.telegram.org/apps</a>.
+            </p>
+            <div className="space-y-2">
+              <KeyRow label="API ID" field="telegram_api_id" hasKey={settings?.telegram_api_id?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+              <KeyRow label="API Hash" field="telegram_api_hash" hasKey={settings?.telegram_api_hash?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+              <KeyRow label="Phone Number" field="telegram_phone" hasKey={settings?.telegram_phone?.has_key} form={form} set={set} showKeys={showKeys} toggleShow={toggleShow} />
+            </div>
+            <p className="text-[10px] text-slate-600 mt-3">
+              After saving credentials, go to <a href="/telegram" className="text-blue-400 hover:underline">Telegram Channels</a> to authorise the session and add channels.
+            </p>
+          </Card>
+        </CollapsibleSection>
 
         {/* ─────────  NEWS SOURCES (RSS)  ───────── */}
-        <Section icon={Newspaper} label="News Sources" description="Manage RSS feeds the scheduler polls hourly" />
+        <CollapsibleSection
+          icon={Newspaper}
+          label="News Sources"
+          description="Manage RSS feeds the scheduler polls and configure automation"
+          collapsed={collapsedSections.has('news')}
+          onToggle={() => toggleSection('news')}
+        >
 
         <Card title="Automation">
           <div className="space-y-5">
@@ -433,24 +486,48 @@ export default function SettingsPage() {
           </div>
         </Card>
 
-        <Card title="RSS Feeds">
-          <SourcesManager />
-        </Card>
+          <Card title="RSS Feeds">
+            <SourcesManager />
+          </Card>
+        </CollapsibleSection>
       </div>
     </div>
   )
 }
 
-function Section({ icon: Icon, label, description }: { icon: React.ComponentType<{ size?: number | string }>; label: string; description?: string }) {
+function CollapsibleSection({
+  icon: Icon, label, description, collapsed, onToggle, children,
+}: {
+  icon: React.ComponentType<{ size?: number | string }>
+  label: string
+  description?: string
+  collapsed: boolean
+  onToggle: () => void
+  children?: React.ReactNode
+}) {
   return (
-    <div className="flex items-center gap-3 pt-3 pb-1 border-b border-[#1e2433]">
-      <div className="w-9 h-9 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-        <Icon size={16} />
-      </div>
-      <div>
-        <h2 className="text-base font-bold text-white">{label}</h2>
-        {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}
-      </div>
+    <div>
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-3 pt-3 pb-2 border-b border-[#1e2433] group text-left"
+      >
+        <div className="w-9 h-9 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 flex-shrink-0">
+          <Icon size={16} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-base font-bold text-white">{label}</h2>
+          {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}
+        </div>
+        <ChevronRight
+          size={16}
+          className={clsx('text-slate-500 flex-shrink-0 transition-transform duration-200', !collapsed && 'rotate-90')}
+        />
+      </button>
+      {!collapsed && (
+        <div className="space-y-4 mt-4">
+          {children}
+        </div>
+      )}
     </div>
   )
 }
