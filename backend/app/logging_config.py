@@ -7,9 +7,29 @@ Two log files are maintained under `backend/logs/`:
 Both rotate hourly. `backupCount` == retention_hours, so e.g. 24 keeps the last
 24 hourly files (~1 day). Default is read from config; can be overridden by
 storing `log_retention_hours` in the AppSettings table.
+
+Windows-specific note
+─────────────────────
+Python's `TimedRotatingFileHandler` rotates by calling `os.rename(src, dst)`.
+On Windows this raises `PermissionError` (WinError 32) whenever *any* other
+handle — in the same process or in a sibling subprocess (e.g. uvicorn --reload
+worker) — still has the log file open.
+
+Two mitigations are applied here:
+
+1. **One handler per file** — uvicorn loggers are set to ``propagate = True``
+   so their records flow up to the *single* root-logger handler.  Previously
+   four `TimedRotatingFileHandler` instances all pointed at ``app.log``; now
+   there is exactly one.  This alone eliminates most in-process races.
+
+2. **Graceful PermissionError swallow** — ``_WinSafeTimedRotatingFileHandler``
+   catches any ``PermissionError`` raised inside ``rotate()`` and skips the
+   rename.  The file keeps growing until the next rotation tick succeeds.
+   This is a safety net for the cross-process case (reload worker).
 """
 import logging
 import os
+import sys
 import time
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -27,6 +47,24 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # Marker used to find handlers we own when reconfiguring at runtime.
 _HANDLER_TAG = "_newsportal_managed"
+
+
+class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """``TimedRotatingFileHandler`` that swallows ``PermissionError`` on Windows.
+
+    ``os.rename`` raises WinError 32 when the file is open by another handle
+    (sibling subprocess, IDE, antivirus).  Catching the error here lets the
+    logger keep writing to the un-rotated file rather than crashing the process.
+    The next hourly tick will attempt rotation again.
+    """
+
+    if sys.platform == "win32":
+        def rotate(self, source: str, dest: str) -> None:  # type: ignore[override]
+            try:
+                super().rotate(source, dest)
+            except PermissionError:
+                # Skip rotation silently — file will be rotated on the next tick.
+                pass
 
 
 def _resolve_retention_hours(db=None) -> int:
@@ -60,14 +98,15 @@ def _resolve_log_level(db=None) -> int:
     return getattr(logging, (name or "INFO").upper(), logging.INFO)
 
 
-def _make_rotating_handler(path: Path, retention_hours: int) -> TimedRotatingFileHandler:
-    handler = TimedRotatingFileHandler(
+def _make_rotating_handler(path: Path, retention_hours: int) -> _WinSafeTimedRotatingFileHandler:
+    handler = _WinSafeTimedRotatingFileHandler(
         filename=path,
         when="H",
         interval=1,
         backupCount=retention_hours,
         utc=False,
         encoding="utf-8",
+        delay=True,   # Don't open the file until the first log record is written
     )
     handler.setFormatter(logging.Formatter(_FORMAT, _DATE_FORMAT))
     setattr(handler, _HANDLER_TAG, True)
@@ -114,13 +153,23 @@ def configure_logging(db=None, app_log_path: Optional[Path] = None) -> None:
     root.setLevel(level)
     root.addHandler(app_handler)
 
-    # Uvicorn writes via its own loggers — attach the same file so request logs land too.
-    # Only done for the API process; the scheduler has no uvicorn instance.
+    # Uvicorn loggers: propagate to root so their records reach the single file
+    # handler above.  We do NOT add separate file handlers — that was the old
+    # approach and created 4 competing handles on app.log, causing WinError 32
+    # when the hourly rotation fired.
     if is_api_process:
         for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
             ulg = logging.getLogger(name)
-            ulg.addHandler(_make_rotating_handler(APP_LOG, retention))
+            # Remove any duplicate managed handlers left from a previous configure call.
+            for h in list(ulg.handlers):
+                if getattr(h, _HANDLER_TAG, False):
+                    ulg.removeHandler(h)
+                    try:
+                        h.close()
+                    except Exception:
+                        pass
             ulg.setLevel(level)
+            ulg.propagate = True  # records bubble up to root → single file handler
 
 
 def get_client_logger() -> logging.Logger:
