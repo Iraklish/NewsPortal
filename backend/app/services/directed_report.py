@@ -186,6 +186,62 @@ Return a JSON object with exactly these fields:
     return system, user
 
 
+# ── Type coercers — guard against AI returning wrong types ──────────────────
+# The AI prompt asks for specific types but LLMs occasionally return a list
+# where we expect a plain string, or vice-versa.  These helpers normalise the
+# value before it hits SQLAlchemy so we never get a "type 'list' is not
+# supported" binding error.
+
+def _coerce_text(val, default: str = "") -> str:
+    """Convert anything to a plain string (TEXT column)."""
+    if val is None:
+        return default
+    if isinstance(val, str):
+        return val
+    if isinstance(val, list):
+        # Join list items as readable bullet points
+        return "\n".join(
+            f"• {item}" if not str(item).startswith(("•", "-", "*", "1", "2", "3", "4", "5")) else str(item)
+            for item in val
+        )
+    if isinstance(val, dict):
+        return json.dumps(val, ensure_ascii=False)
+    return str(val)
+
+
+def _coerce_list(val, default: list | None = None) -> list:
+    """Convert anything to a list (JSON column)."""
+    if val is None:
+        return default if default is not None else []
+    if isinstance(val, list):
+        return val
+    if isinstance(val, str):
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+        return [val]
+    return [str(val)]
+
+
+def _coerce_dict(val, default: dict | None = None) -> dict:
+    """Convert anything to a dict (JSON column)."""
+    if val is None:
+        return default if default is not None else {}
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str):
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return {}
+
+
 def _parse_json(raw: str) -> dict:
     cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
     start = cleaned.find("{")
@@ -310,20 +366,24 @@ async def run_directed_report(
     report = DirectedReport(
         focus=focus,
         model_used=model_name,
-        headline=data.get("headline", ""),
-        executive_summary=data.get("executive_summary", ""),
-        key_developments=data.get("key_developments", []) or [],
-        economic_impact=data.get("economic_impact", ""),
-        market_impact=data.get("market_impact", ""),
-        geopolitical_impact=data.get("geopolitical_impact", ""),
-        sector_impact=data.get("sector_impact", {}) or {},
-        risk_assessment=data.get("risk_assessment", ""),
-        opportunities=data.get("opportunities", ""),
-        contrarian_views=data.get("contrarian_views", ""),
-        prognosis_short=data.get("prognosis_short", ""),
-        prognosis_long=data.get("prognosis_long", ""),
-        signals_to_watch=data.get("signals_to_watch", []) or [],
-        confidence_score=float(data.get("confidence_score", 0.0)),
+        # Text columns — coerce in case the AI returned a list or dict
+        headline=_coerce_text(data.get("headline")),
+        executive_summary=_coerce_text(data.get("executive_summary")),
+        economic_impact=_coerce_text(data.get("economic_impact")),
+        market_impact=_coerce_text(data.get("market_impact")),
+        geopolitical_impact=_coerce_text(data.get("geopolitical_impact")),
+        risk_assessment=_coerce_text(data.get("risk_assessment")),
+        opportunities=_coerce_text(data.get("opportunities")),
+        contrarian_views=_coerce_text(data.get("contrarian_views")),
+        prognosis_short=_coerce_text(data.get("prognosis_short")),
+        prognosis_long=_coerce_text(data.get("prognosis_long")),
+        # JSON list columns — coerce in case the AI returned a plain string
+        key_developments=_coerce_list(data.get("key_developments")),
+        signals_to_watch=_coerce_list(data.get("signals_to_watch")),
+        # JSON dict column — coerce in case the AI returned a JSON-encoded string
+        sector_impact=_coerce_dict(data.get("sector_impact")),
+        # Scalars
+        confidence_score=float(data.get("confidence_score") or 0.0),
         impact_type=impact_type,
         references=references,
         db_article_count=len(db_articles),
