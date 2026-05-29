@@ -315,7 +315,11 @@ async def list_unread_channels(db: Session) -> list[dict]:
 # ── Scheduler entry point ────────────────────────────────────────────────────
 
 async def fetch_all_telegram_sources(db: Session) -> list[int]:
-    """Fetch all enabled Telegram sources.  Returns list of new Article IDs."""
+    """Fetch all enabled Telegram sources with a single shared client connection.
+
+    One connect → N channels fetched → one disconnect.
+    This avoids the O(N) authentication round-trips of the old per-channel approach.
+    """
     if not credentials_configured(db):
         logger.debug("[telegram] credentials not configured — skipping")
         return []
@@ -332,14 +336,121 @@ async def fetch_all_telegram_sources(db: Session) -> list[int]:
         logger.warning("[telegram] invalid telegram_api_id: %r", api_id_str)
         return []
 
-    all_ids: list[int] = []
-    for source in sources:
-        try:
-            ids = await fetch_telegram_channel(source, db, api_id, api_hash)
-            if ids:
-                logger.info("[telegram] %s: +%d new message(s)", source.name or source.channel_id, len(ids))
-            all_ids.extend(ids)
-        except Exception as exc:
-            logger.exception("[telegram] unhandled error for %s: %s", source.channel_id, exc)
+    from telethon import TelegramClient
+    from telethon.tl.functions.messages import GetHistoryRequest
 
+    all_ids: list[int] = []
+
+    async with _get_lock():
+        client = TelegramClient(_SESSION_PATH, api_id, api_hash)
+        await client.connect()
+        try:
+            if not await client.is_user_authorized():
+                logger.warning("[telegram] session not authorized — skipping all channels")
+                return []
+
+            logger.info("[telegram] fetching %d channel(s) on shared connection", len(sources))
+
+            for source in sources:
+                cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=source.lookback_hours)
+                new_ids: list[int] = []
+
+                try:
+                    try:
+                        peer_key = int(source.channel_id)
+                    except (ValueError, TypeError):
+                        peer_key = source.channel_id
+
+                    entity = await client.get_entity(peer_key)
+                    offset_id = 0
+
+                    while True:
+                        result = await client(GetHistoryRequest(
+                            peer=entity,
+                            limit=200,
+                            offset_date=None,
+                            offset_id=offset_id,
+                            max_id=0,
+                            min_id=0,
+                            add_offset=0,
+                            hash=0,
+                        ))
+                        if not result.messages:
+                            break
+
+                        reached_cutoff = False
+                        for msg in result.messages:
+                            msg_time = msg.date.replace(tzinfo=None)
+                            if msg_time < cutoff:
+                                reached_cutoff = True
+                                break
+
+                            text = (getattr(msg, "message", "") or "").strip()
+                            if not text:
+                                continue
+
+                            u = _msg_url(source.channel_id, msg.id)
+                            u_hash = url_hash(u)
+                            if db.query(Article).filter(Article.url_hash == u_hash).first():
+                                continue  # already stored
+
+                            first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:200]
+                            article = Article(
+                                url=u,
+                                url_hash=u_hash,
+                                title=first_line or None,
+                                source=source.name or source.channel_id,
+                                category="telegram",
+                                published_at=msg_time,
+                                content=text,
+                                is_analyzed=False,
+                            )
+                            db.add(article)
+                            try:
+                                db.flush()
+                                new_ids.append(article.id)
+                            except Exception:
+                                db.rollback()
+                                logger.warning("[telegram] failed to store msg %s/%d", source.channel_id, msg.id)
+
+                        try:
+                            db.commit()
+                        except Exception:
+                            db.rollback()
+
+                        if reached_cutoff or not result.messages:
+                            break
+                        if result.messages[-1].date.replace(tzinfo=None) < cutoff:
+                            break
+                        offset_id = result.messages[-1].id
+
+                    source.last_fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    source.last_status = "ok" if new_ids else "empty"
+                    source.last_error = None
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+
+                    if new_ids:
+                        logger.info("[telegram] %s: +%d new message(s)", source.name or source.channel_id, len(new_ids))
+                    all_ids.extend(new_ids)
+
+                except Exception as exc:
+                    logger.warning("[telegram] error fetching %s: %s", source.channel_id, exc)
+                    source.last_status = "error"
+                    source.last_error = str(exc)[:512]
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+    logger.info("[telegram] shared-session fetch complete: %d new article(s) from %d channel(s)",
+                len(all_ids), len(sources))
     return all_ids
