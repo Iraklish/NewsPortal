@@ -86,6 +86,7 @@ export default function NewsPage() {
   const [bulkTagging, setBulkTagging] = useState(false)
   const [bulkTagMsg, setBulkTagMsg] = useState('')
   const [page, setPage] = useState(0)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // Grid / limit settings — start with SSR-safe defaults; localStorage applied after mount
   const [gridCols, setGridColsRaw] = useState<number>(2)
@@ -117,6 +118,7 @@ export default function NewsPage() {
 
   async function load(params?: { category?: string; q?: string; tag?: string; limit?: number; page?: number }) {
     setLoading(true)
+    setLoadError(null)
     const effCategory = params?.category ?? category
     const effQuery = params?.q ?? query
     const effTag = params?.tag !== undefined ? params.tag : tag
@@ -139,6 +141,8 @@ export default function NewsPage() {
       ])
       setArticles(data)
       setTotalCount(countRes.count)
+    } catch (e: unknown) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to reach the backend. Is it running?')
     } finally {
       setLoading(false)
     }
@@ -418,6 +422,19 @@ export default function NewsPage() {
         <p className="text-xs text-teal-400 mb-3">{bulkTagMsg}</p>
       )}
 
+      {/* Backend connection error */}
+      {loadError && (
+        <div className="flex items-center gap-3 px-4 py-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm">
+          <span className="text-red-400 flex-1">{loadError}</span>
+          <button
+            onClick={() => load()}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 rounded-lg text-xs text-red-300 font-medium transition-colors"
+          >
+            <RefreshCw size={11} /> Retry
+          </button>
+        </div>
+      )}
+
       {/* List */}
       {loading ? (
         <div className="space-y-3">
@@ -425,7 +442,7 @@ export default function NewsPage() {
             <div key={i} className="h-24 bg-[#0d1117] border border-[#1e2433] rounded-xl animate-pulse" />
           ))}
         </div>
-      ) : articles.length === 0 ? (
+      ) : articles.length === 0 && !loadError ? (
         <div className="text-center py-20 text-slate-500">
           <p className="text-lg">No articles match these filters.</p>
         </div>
