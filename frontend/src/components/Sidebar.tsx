@@ -1,23 +1,12 @@
 'use client'
 import Link from 'next/link'
-import { usePathname, useSearchParams } from 'next/navigation'
-import { BarChart2, LineChart, Network, Settings, MessageSquare, Newspaper, FileText, Menu, X, Send, Search, Tv } from 'lucide-react'
+import { usePathname } from 'next/navigation'
+import { BarChart2, LineChart, Network, Settings, MessageSquare, Newspaper, FileText, Menu, X, Send, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import AIChatPanel from './AIChatPanel'
 
-type NavItem = {
-  href: string
-  label: string
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  icon: React.ComponentType<any>
-  /** When set, this item links to `href?category=<category>` and is only
-   *  active when both the pathname and the ?category param match. */
-  category?: string
-}
-
-const nav: NavItem[] = [
+const nav = [
   { href: '/news', label: 'News', icon: Newspaper },
-  { href: '/news', label: 'Entertainment', icon: Tv, category: 'entertainment' },
   { href: '/analysis', label: 'Analysis & Prognosis', icon: BarChart2 },
   { href: '/stocks', label: 'Stock Reviews', icon: LineChart },
   { href: '/search', label: 'Web Search', icon: Search },
@@ -27,36 +16,14 @@ const nav: NavItem[] = [
   { href: '/settings', label: 'Settings', icon: Settings },
 ]
 
-/** Category values that have dedicated sidebar entries on the same base path. */
-const EXCLUSIVE_CATEGORIES = new Set(
-  nav.filter(n => n.category).map(n => n.category as string),
-)
-
 export default function Sidebar() {
   const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const catParam = searchParams.get('category') ?? ''
   const [open, setOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatUsed, setChatUsed] = useState(false)
 
   // Close sidebar on route change (mobile nav tap)
   useEffect(() => { setOpen(false) }, [pathname])
-
-  function isActive(item: NavItem): boolean {
-    if (item.category) {
-      // Category-pinned item: active only when pathname AND category param both match
-      return pathname === item.href && catParam === item.category
-    }
-    const pathMatch = pathname === item.href || pathname.startsWith(item.href + '/')
-    if (!pathMatch) return false
-    // For base paths that have exclusive category entries (e.g. /news → entertainment),
-    // the generic item is active only when the current category isn't one of those.
-    if (EXCLUSIVE_CATEGORIES.size > 0 && item.href === '/news') {
-      return !EXCLUSIVE_CATEGORIES.has(catParam)
-    }
-    return true
-  }
 
   return (
     <>
@@ -116,14 +83,12 @@ export default function Sidebar() {
 
         {/* Nav links */}
         <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-          {nav.map((item) => {
-            const { href, label, icon: Icon, category } = item
-            const linkHref = category ? `${href}?category=${category}` : href
-            const active = isActive(item)
+          {nav.map(({ href, label, icon: Icon }) => {
+            const active = pathname === href || pathname.startsWith(href + '/')
             return (
               <Link
-                key={linkHref}
-                href={linkHref}
+                key={href}
+                href={href}
                 className={[
                   'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
                   active
