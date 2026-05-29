@@ -1,6 +1,7 @@
 """Pulls articles from RSS feeds and NewsAPI, dedupes, persists."""
 import asyncio
 import logging
+import socket
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
@@ -157,7 +158,7 @@ async def _enrich_articles_fulltext(article_ids: list[int], db: Session) -> None
                 len(thin), len(article_ids))
 
     sem = asyncio.Semaphore(8)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     async def _get(url: str) -> str:
         async with sem:
@@ -212,6 +213,10 @@ def _fetch_rss_feed(source: RssSource, db: Session) -> list[int]:
     category = source.category
 
     source.last_fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    # feedparser uses urllib which honours socket.setdefaulttimeout().
+    # Without a timeout a single hung server can block the entire scheduler cycle.
+    _prev_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(15)
     try:
         feed = feedparser.parse(url, agent=_USER_AGENT)
     except Exception as exc:
@@ -220,6 +225,8 @@ def _fetch_rss_feed(source: RssSource, db: Session) -> list[int]:
         source.last_error = str(exc)[:500]
         db.commit()
         return new_ids
+    finally:
+        socket.setdefaulttimeout(_prev_timeout)
 
     # ── HTTP status check ────────────────────────────────────────────────────
     http_status = getattr(feed, "status", None)
@@ -407,9 +414,16 @@ async def fetch_all_sources(db: Session) -> list[int]:
         .all()
     )
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     for source in sources:
-        ids = await loop.run_in_executor(None, _fetch_rss_feed, source, db)
+        try:
+            ids = await asyncio.wait_for(
+                loop.run_in_executor(None, _fetch_rss_feed, source, db),
+                timeout=30.0,   # belt-and-suspenders: socket timeout (15s) fires first
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[fetcher] source %d (%s) timed out — skipping", source.id, source.url[:60])
+            ids = []
         new_ids.extend(ids)
 
     new_ids.extend(await _fetch_newsapi_all(db))

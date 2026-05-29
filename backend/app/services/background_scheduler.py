@@ -140,6 +140,11 @@ async def _run_cycle() -> None:
     logger.info("[scheduler] ── cycle #%d starting ──────────────────────────", cycle_num)
     db = SessionLocal()
     try:
+        # Stamp the cycle start immediately so the UI shows a fresh timestamp
+        # even while the (potentially long) fetch is running.
+        _db_set(db, "scheduler_last_run_at", _now().isoformat())
+        db.commit()
+
         # Fetch from RSS/web sources and Telegram channels.
         new_ids = await fetch_all_sources(db)
         tg_ids = await fetch_all_telegram_sources(db)
@@ -150,10 +155,6 @@ async def _run_cycle() -> None:
             "[scheduler] cycle #%d — fetch complete: %d new article(s) (%d telegram) in %.1fs",
             cycle_num, len(new_ids), len(tg_ids), elapsed_fetch,
         )
-
-        # Persist the last-run timestamp so the Settings UI can show it.
-        _db_set(db, "scheduler_last_run_at", _now().isoformat())
-        db.commit()
 
         # ── Auto-tag: tag new articles in categories that have it enabled ────
         auto_tag_cats = _get_auto_tag_categories(db)
@@ -316,7 +317,15 @@ async def run_scheduler() -> None:
                 await asyncio.sleep(interval * 60)
 
             # Run one fetch + analyse cycle.
-            await _run_cycle()
+            # Hard timeout prevents a hung feed from blocking the scheduler forever.
+            _CYCLE_TIMEOUT = 25 * 60  # 25 minutes
+            try:
+                await asyncio.wait_for(_run_cycle(), timeout=_CYCLE_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[scheduler] cycle exceeded %d min timeout — aborting, next cycle starts shortly",
+                    _CYCLE_TIMEOUT // 60,
+                )
 
             # Daily retention prune (once per 23+ hours).
             if _now() - last_prune >= timedelta(hours=23):
