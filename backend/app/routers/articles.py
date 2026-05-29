@@ -24,6 +24,59 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+# ── Entertainment broad-filter ────────────────────────────────────────────────
+# When category="entertainment" is requested we apply an OR across:
+#   1. category = 'entertainment'  (articles fetched from dedicated feeds)
+#   2. Any AI-extracted tag that is in the entertainment taxonomy
+#   3. Title contains an entertainment keyword
+
+_ENT_TAGS: list[str] = [
+    "entertainment", "movies", "film", "cinema", "music", "celebrity", "celebrities",
+    "television", "tv show", "tv series", "streaming", "concert", "album", "box office",
+    "oscar", "oscars", "grammy", "grammys", "emmy", "emmys", "golden globe",
+    "hollywood", "broadway", "pop culture", "culture", "gaming", "video games",
+    "fashion", "awards", "red carpet", "netflix", "disney", "marvel", "spotify",
+    "actor", "actress", "singer", "director", "rapper", "musician", "band",
+    "theater", "theatre", "pop music", "hip hop", "rock music", "comedy",
+]
+_ENT_TAGS_JSON = json.dumps(_ENT_TAGS)   # passed as bound param — SQL-safe
+
+_ENT_KEYWORDS: list[str] = [
+    "movie", "film", "music", "celebrity", "actor", "actress", "singer",
+    "concert", "album", "oscar", "grammy", "emmy", "golden globe",
+    "hollywood", "netflix", "disney", "marvel", "hbo", "hulu", "amazon prime",
+    "box office", "premiere", "streaming", "spotify", "trailer",
+    "season finale", "music video", "chart-topping", "grammy-winning",
+    "oscar-winning", "emmy-winning",
+]
+
+
+def _apply_entertainment_filter(query, model):
+    """Broaden a query to match entertainment content across all categories.
+
+    Matches articles that:
+      • are in the 'entertainment' category, OR
+      • have any entertainment-related AI tag, OR
+      • have entertainment keywords in the title.
+    """
+    tag_exists = text(
+        "EXISTS ("
+        "  SELECT 1 FROM json_each(articles.tags) t"
+        "  WHERE lower(t.value) IN ("
+        "    SELECT lower(value) FROM json_each(:ent_tags)"
+        "  )"
+        ")"
+    ).bindparams(ent_tags=_ENT_TAGS_JSON)
+
+    title_conditions = [model.title.ilike(f"%{kw}%") for kw in _ENT_KEYWORDS]
+
+    return query.filter(or_(
+        model.category == "entertainment",
+        tag_exists,
+        *title_conditions,
+    ))
+
+
 # ── Deduplication helpers ─────────────────────────────────────────────────────
 
 def _url_hash(url: str) -> str:
@@ -99,7 +152,10 @@ def count_articles(
 ):
     """Total article count for the given filters (independent of paging)."""
     query = db.query(Article.id)
-    if category:
+    if category == "entertainment":
+        # Broad OR: category + entertainment tags + title keywords
+        query = _apply_entertainment_filter(query, Article)
+    elif category:
         query = query.filter(Article.category == category)
     if untagged:
         query = query.filter(
@@ -131,7 +187,10 @@ def list_articles(
     db: Session = Depends(get_db),
 ):
     query = db.query(Article)
-    if category:
+    if category == "entertainment":
+        # Broad OR: category + entertainment tags + title keywords
+        query = _apply_entertainment_filter(query, Article)
+    elif category:
         query = query.filter(Article.category == category)
     if untagged:
         query = query.filter(
