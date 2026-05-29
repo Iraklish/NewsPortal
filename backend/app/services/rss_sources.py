@@ -469,6 +469,34 @@ RSS_FEEDS: dict[str, list[str]] = {
         "https://feeds.a.dj.com/rss/RSSWSJD.xml",
     ],
 
+    # ── Entertainment ─────────────────────────────────────────────────────────
+    "entertainment": [
+        # Trade press
+        "https://variety.com/feed/",
+        "https://deadline.com/feed/",
+        "https://www.hollywoodreporter.com/feed/",
+        "https://www.thewrap.com/feed/",
+        "https://www.indiewire.com/feed/",
+        # Music
+        "https://www.rollingstone.com/feed/",
+        "https://www.billboard.com/feed/",
+        "https://pitchfork.com/rss/news/feed.xml",
+        "https://consequence.net/feed/",
+        # Film & TV criticism
+        "https://www.vulture.com/rss/index.xml",
+        "https://collider.com/feed/",
+        "https://screenrant.com/feed/",
+        "https://www.avclub.com/rss",
+        # Celebrity / tabloid
+        "https://people.com/feed/",
+        "https://pagesix.com/feed/",
+        "https://www.eonline.com/syndication/feeds/rssfeeds/topstories.xml",
+        # Google News entertainment (search-based, stable)
+        "https://news.google.com/rss/search?q=entertainment+news&hl=en-US&gl=US&ceid=US:en",
+        # Yahoo entertainment
+        "https://news.yahoo.com/rss/entertainment",
+    ],
+
     # ── JP Morgan ─────────────────────────────────────────────────────────────
     # JP Morgan does not publish native public RSS feeds. We use Google News
     # search RSS to surface JP Morgan research, commentary, and corporate news.

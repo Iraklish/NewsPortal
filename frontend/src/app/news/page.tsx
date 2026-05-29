@@ -159,9 +159,14 @@ export default function NewsPage() {
     setGridColsRaw(cols)
     setGridRowsRaw(rows)
 
+    // Pre-select category from URL (?category=entertainment etc.)
+    const urlParams = new URLSearchParams(window.location.search)
+    const urlCategory = urlParams.get('category') || ''
+    if (urlCategory) setCategory(urlCategory)
+
     articlesApi.categories().then(setCategories).catch(() => {})
     reloadTags()
-    load({ limit: cols * rows })  // pass explicit limit — state update is async
+    load({ limit: cols * rows, category: urlCategory })  // pass explicit limit — state update is async
     loadStatus()
     const id = setInterval(loadStatus, 30000)
     return () => clearInterval(id)

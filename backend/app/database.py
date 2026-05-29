@@ -35,24 +35,28 @@ def init_db():
 
 
 def _seed_rss_sources():
-    """Populate rss_sources table from rss_sources.RSS_FEEDS if empty."""
+    """Populate rss_sources table from rss_sources.RSS_FEEDS.
+
+    Adds any feeds that are not already in the DB without touching existing rows.
+    This means new categories (e.g. entertainment) are picked up automatically
+    on the next server restart even on existing installations.
+    """
     from .models import RssSource
     from .services.rss_sources import RSS_FEEDS
 
     with SessionLocal() as db:
-        if db.query(RssSource).count() > 0:
-            return
-        seen: set[str] = set()
+        existing_urls: set[str] = {row.url for row in db.query(RssSource.url).all()}
         added = 0
         for category, urls in RSS_FEEDS.items():
             for url in urls:
-                if url in seen:
+                if url in existing_urls:
                     continue
-                seen.add(url)
+                existing_urls.add(url)
                 db.add(RssSource(url=url, category=category, enabled=True))
                 added += 1
-        db.commit()
-        logger.info("Seeded %d RSS sources", added)
+        if added:
+            db.commit()
+            logger.info("Seeded %d new RSS sources", added)
 
 
 def _run_migrations():
