@@ -28,6 +28,10 @@ backend/logs/
 .env.*
 !.env.example
 
+# Telegram client session — authenticated credentials, NEVER commit
+*.session
+*.session-journal
+
 # ── Node / Frontend ───────────────────────────────────────────────────────────
 node_modules/
 .next/

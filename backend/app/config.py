@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     retention_days: int = 365
     max_auto_analyze_per_run: int = 25
     auto_analyze_enabled: bool = True
+    auto_tag_interval_minutes: int = 10  # secondary scheduler: backfill tags for untagged articles
 
     # AI prompt overrides (empty -> use hardcoded defaults)
     chat_system_prompt: str = ""
@@ -62,6 +63,28 @@ DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT = (
     "Acknowledge contradictions between sources rather than glossing over them. "
     "Respond with ONLY a single valid JSON object — no markdown, no surrounding prose."
 )
+
+DEFAULT_SUMMARY_SYSTEM_PROMPT = """\
+Summarize the following messages. Except weather, humor and advertisements, organize the summary \
+by breaking down all subjects and topics discussed. For each subject, list relevant topics and \
+provide a detailed explanation of key points, insights, or decisions mentioned.
+
+Structure the summary in this format:
+
+**Subject-Tagged Format (Strict Adherence Required):**
+
+You **must strictly adhere** to the following format
+
+**Subject 1**: [Brief overview of the subject] , sources
+  - [Detailed description of points discussed]
+  - [Detailed description of points discussed]
+  - [Detailed description of points discussed]
+
+**Subject 2**: [Brief overview of the subject] , sources
+  - [Detailed description of points discussed]
+  - [Detailed description of points discussed]
+  - [Detailed description of points discussed]\
+"""
 
 
 settings = Settings()

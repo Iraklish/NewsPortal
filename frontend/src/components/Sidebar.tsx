@@ -1,12 +1,14 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart2, LineChart, Network, Settings, MessageSquare, Newspaper, FileText, Menu, X, Send, Search } from 'lucide-react'
+import { BarChart2, LineChart, Network, Settings, MessageSquare, Newspaper, FileText, Menu, X, Send, Search, ScrollText, Languages } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import AIChatPanel from './AIChatPanel'
+import { useLanguage, LANGUAGES, Lang } from '@/lib/language'
 
 const nav = [
   { href: '/news', label: 'News', icon: Newspaper },
+  { href: '/summary', label: 'Summary', icon: ScrollText },
   { href: '/analysis', label: 'Analysis & Prognosis', icon: BarChart2 },
   { href: '/stocks', label: 'Stock Reviews', icon: LineChart },
   { href: '/search', label: 'Web Search', icon: Search },
@@ -21,6 +23,7 @@ export default function Sidebar() {
   const [open, setOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatUsed, setChatUsed] = useState(false)
+  const { language, setLanguage } = useLanguage()
 
   // Close sidebar on route change (mobile nav tap)
   useEffect(() => { setOpen(false) }, [pathname])
@@ -102,6 +105,28 @@ export default function Sidebar() {
             )
           })}
         </nav>
+
+        {/* Global language selector */}
+        <div className="p-3 border-t border-[#1e2433]">
+          <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5 px-1">
+            <Languages size={13} className="text-indigo-400" />
+            Language
+          </label>
+          <select
+            value={language}
+            onChange={e => setLanguage(e.target.value as Lang)}
+            className={[
+              'w-full px-3 py-2 rounded-lg text-sm bg-[#0a0f1e] border outline-none transition-colors cursor-pointer',
+              language !== 'English'
+                ? 'border-indigo-500/40 text-indigo-300'
+                : 'border-[#1e2433] text-slate-300 hover:border-slate-600',
+            ].join(' ')}
+          >
+            {LANGUAGES.map(l => (
+              <option key={l} value={l} className="bg-[#0d1117]">{l}</option>
+            ))}
+          </select>
+        </div>
 
         {/* AI Chat button */}
         <div className="p-3 border-t border-[#1e2433]">

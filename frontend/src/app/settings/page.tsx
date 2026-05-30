@@ -32,6 +32,9 @@ export default function SettingsPage() {
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelsError, setModelsError] = useState('')
   const [nextFetchAt, setNextFetchAt] = useState<string | null>(null)
+  const [editingNextRun, setEditingNextRun] = useState(false)
+  const [nextRunInput, setNextRunInput] = useState('')
+  const [settingNextRun, setSettingNextRun] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [autoTagCategories, setAutoTagCategories] = useState<string[]>([])
   const [allCategories, setAllCategories] = useState<string[]>([])
@@ -63,7 +66,9 @@ export default function SettingsPage() {
         chat_system_prompt: s.chat_system_prompt_customized ? s.chat_system_prompt : '',
         ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '',
         directed_report_system_prompt: s.directed_report_system_prompt_customized ? s.directed_report_system_prompt : '',
+        summary_system_prompt: s.summary_system_prompt_customized ? s.summary_system_prompt : '',
         fetch_interval_minutes: s.fetch_interval_minutes,
+        auto_tag_interval_minutes: s.auto_tag_interval_minutes,
       })
     }).catch((e: unknown) => {
       setLoadError(e instanceof Error ? e.message : 'Could not reach backend')
@@ -126,6 +131,37 @@ export default function SettingsPage() {
     setTimeout(() => setToast(null), 3000)
   }
 
+  function startEditNextRun() {
+    if (!nextFetchAt) return
+    // Convert the stored UTC string to a "YYYY-MM-DDTHH:MM" string in local time
+    // so the datetime-local input is pre-filled correctly.
+    const d = new Date(nextFetchAt.endsWith('Z') ? nextFetchAt : nextFetchAt + 'Z')
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16)
+    setNextRunInput(local)
+    setEditingNextRun(true)
+  }
+
+  async function applyNextRun() {
+    if (!nextRunInput) return
+    setSettingNextRun(true)
+    try {
+      // datetime-local gives local time — convert to UTC ISO for the backend
+      const utcIso = new Date(nextRunInput).toISOString()
+      await sourcesApi.setNextRun(utcIso)
+      setEditingNextRun(false)
+      // Refresh displayed time from the server
+      const s = await sourcesApi.status()
+      setNextFetchAt(s.next_fetch_at ?? null)
+      showToast('Next fetch time updated', 'success')
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Failed to set next run time', 'error')
+    } finally {
+      setSettingNextRun(false)
+    }
+  }
+
   function toggleShow(key: string) {
     setShowKeys(prev => ({ ...prev, [key]: !prev[key] }))
   }
@@ -155,7 +191,7 @@ export default function SettingsPage() {
         <p className="font-semibold">Could not load settings</p>
         <p className="text-red-400/70 text-xs mt-0.5">{loadError} — is the backend running on port 8000?</p>
       </div>
-      <button onClick={() => { setLoadError(''); setLoading(true); settingsApi.get().then(s => { setSettings(s); setForm({ default_ai_provider: s.default_ai_provider, default_ai_model: s.default_ai_model, chat_system_prompt: s.chat_system_prompt_customized ? s.chat_system_prompt : '', ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '', directed_report_system_prompt: s.directed_report_system_prompt_customized ? s.directed_report_system_prompt : '', fetch_interval_minutes: s.fetch_interval_minutes }) }).catch((e: unknown) => setLoadError(e instanceof Error ? e.message : 'Failed')).finally(() => setLoading(false)) }} className="ml-auto flex-shrink-0 p-1.5 hover:bg-red-500/20 rounded transition-colors"><RefreshCw size={14} /></button>
+      <button onClick={() => { setLoadError(''); setLoading(true); settingsApi.get().then(s => { setSettings(s); setForm({ default_ai_provider: s.default_ai_provider, default_ai_model: s.default_ai_model, chat_system_prompt: s.chat_system_prompt_customized ? s.chat_system_prompt : '', ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '', directed_report_system_prompt: s.directed_report_system_prompt_customized ? s.directed_report_system_prompt : '', summary_system_prompt: s.summary_system_prompt_customized ? s.summary_system_prompt : '', fetch_interval_minutes: s.fetch_interval_minutes }) }).catch((e: unknown) => setLoadError(e instanceof Error ? e.message : 'Failed')).finally(() => setLoading(false)) }} className="ml-auto flex-shrink-0 p-1.5 hover:bg-red-500/20 rounded transition-colors"><RefreshCw size={14} /></button>
     </div>
   )
 
@@ -328,6 +364,16 @@ export default function SettingsPage() {
                 customized={settings?.directed_report_system_prompt_customized || false}
                 onReset={() => resetKey('directed_report_system_prompt')}
               />
+              <PromptField
+                label="Article / Message Summary"
+                hint="System prompt for the Summary page. Controls structure and style of the AI summary. The default uses a subject-tagged format ideal for Telegram group messages. Customize to match your use case."
+                fieldKey="summary_system_prompt"
+                form={form}
+                set={set}
+                defaultValue={settings?.summary_system_prompt_default || ''}
+                customized={settings?.summary_system_prompt_customized || false}
+                onReset={() => resetKey('summary_system_prompt')}
+              />
             </div>
           </Card>
         </CollapsibleSection>
@@ -456,7 +502,8 @@ export default function SettingsPage() {
                       setSavingAutoTag(true)
                       try {
                         const r = await articlesApi.bulkAutoTag(500, autoTagCategories)
-                        showToast(`Tagged ${r.tagged} article${r.tagged === 1 ? '' : 's'} (${r.total} untagged found${r.errors ? `, ${r.errors} errors` : ''})`, 'success')
+                        const toastType = r.tagged === 0 && r.errors > 0 ? 'error' : 'success'
+                        showToast(`Tagged ${r.tagged} article${r.tagged === 1 ? '' : 's'} (${r.total} untagged found${r.errors ? `, ${r.errors} errors` : ''})`, toastType)
                       } catch (e: unknown) {
                         showToast(e instanceof Error ? e.message : 'Tagging failed', 'error')
                       } finally {
@@ -492,10 +539,62 @@ export default function SettingsPage() {
                     className="input w-32"
                   />
                 </Field>
+                <Field label="Auto-tag interval (minutes)">
+                  <input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={form.auto_tag_interval_minutes ?? settings?.auto_tag_interval_minutes ?? 10}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10)
+                      if (!isNaN(v)) set('auto_tag_interval_minutes', Math.max(1, Math.min(1440, v)))
+                    }}
+                    className="input w-32"
+                  />
+                </Field>
                 {nextFetchAt && (
                   <div className="pb-1.5">
-                    <p className="text-[10px] text-slate-500 mb-0.5">Next scheduled fetch</p>
-                    <p className="text-xs text-indigo-300 font-mono">{new Date(nextFetchAt.endsWith('Z') ? nextFetchAt : nextFetchAt + 'Z').toLocaleTimeString()}</p>
+                    <p className="text-[10px] text-slate-500 mb-1">Next scheduled fetch</p>
+                    {editingNextRun ? (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <input
+                          type="datetime-local"
+                          value={nextRunInput}
+                          onChange={e => setNextRunInput(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') applyNextRun(); if (e.key === 'Escape') setEditingNextRun(false) }}
+                          className="bg-[#161b22] border border-[#1e2433] focus:border-indigo-500/60 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none transition-colors"
+                        />
+                        <button
+                          onClick={applyNextRun}
+                          disabled={settingNextRun || !nextRunInput}
+                          title="Confirm"
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg text-xs text-white font-medium transition-colors"
+                        >
+                          {settingNextRun ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                          Set
+                        </button>
+                        <button
+                          onClick={() => setEditingNextRun(false)}
+                          title="Cancel"
+                          className="p-1.5 text-slate-500 hover:text-white rounded-lg hover:bg-white/5 transition-colors"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-indigo-300 font-mono">
+                          {new Date(nextFetchAt.endsWith('Z') ? nextFetchAt : nextFetchAt + 'Z').toLocaleString()}
+                        </p>
+                        <button
+                          onClick={startEditNextRun}
+                          title="Set custom next run time"
+                          className="p-0.5 text-slate-600 hover:text-slate-300 transition-colors rounded"
+                        >
+                          <Edit2 size={11} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -584,7 +683,7 @@ function PromptField({
 }: {
   label: string
   hint: string
-  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt'
+  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt' | 'summary_system_prompt'
   form: SettingsUpdate
   set: (k: keyof SettingsUpdate, v: string | boolean | number) => void
   defaultValue: string

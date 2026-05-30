@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 async def ai_extract_tags(article: Article, db) -> list[str]:
-    """Call AI to extract 3-7 English topic tags regardless of article language.
+    """Call AI to extract at least 10 English topic tags regardless of article language.
 
     Returns an empty list on any error so callers can safely ignore failures.
     """
@@ -27,24 +27,34 @@ async def ai_extract_tags(article: Article, db) -> list[str]:
     system = (
         "You are a multilingual topic-tagging assistant. Extract canonical English topic tags "
         "from news articles. The article may be in ANY language — always return tags in English. "
-        "Tags must be concise noun phrases (2-5 words). Return ONLY a valid JSON array of strings, "
-        "nothing else. Example: [\"ceasefire negotiations\", \"Middle East diplomacy\", \"US foreign policy\"]"
+        "Tags must be concise noun phrases (2-5 words). Provide AT LEAST 10 tags, covering the "
+        "main topics plus related entities, sectors, regions, people, and themes mentioned. "
+        "Return ONLY a valid JSON array of strings, nothing else. "
+        "Example: [\"ceasefire negotiations\", \"Middle East diplomacy\", \"US foreign policy\"]"
     )
     user = (
         f"Title: {title}\n\n"
         f"Text excerpt:\n{excerpt}\n\n"
-        "Return 3-7 English topic tags as a JSON array:"
+        "Return at least 10 English topic tags as a JSON array:"
     )
 
     try:
-        raw = await call_ai(system=system, user=user, max_tokens=250, db=db)
+        raw = await call_ai(system=system, user=user, max_tokens=500, db=db)
         cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
         s, e = cleaned.find("["), cleaned.rfind("]")
         if s == -1 or e == -1:
             logger.debug("[tagger] could not find JSON array in response: %.80s", raw)
             return []
         tags = json.loads(cleaned[s: e + 1])
-        return [str(t).strip() for t in tags if str(t).strip()][:10]
+        # Deduplicate (case-insensitive) while preserving order; cap at 20.
+        seen: set[str] = set()
+        result: list[str] = []
+        for t in tags:
+            t = str(t).strip()
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                result.append(t)
+        return result[:20]
     except Exception as exc:
         logger.debug("[tagger] tag extraction failed for article %d: %s", article.id, exc)
         return []

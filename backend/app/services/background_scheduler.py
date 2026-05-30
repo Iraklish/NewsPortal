@@ -29,6 +29,8 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import or_
+
 from ..config import settings as cfg
 from ..database import SessionLocal
 from ..models import AppSettings, Article, Analysis
@@ -39,6 +41,37 @@ from .telegram_fetcher import fetch_all_telegram_sources
 logger = logging.getLogger(__name__)
 
 _cycle_count = 0
+
+
+# ── Interruptible sleep ───────────────────────────────────────────────────────
+
+async def _sleep_until(target: datetime) -> None:
+    """Sleep until *target* (naive UTC), polling the DB every 15 s.
+
+    If another coroutine (e.g. the ``/set-next-run`` endpoint) writes a new
+    ``scheduler_next_run_at`` value to the DB, this function will pick it up
+    on the next tick and adjust the wake-up time accordingly — allowing the
+    user to bring the next run forward (or push it later) without restarting
+    the server.
+    """
+    _TICK = 15  # seconds between DB polls
+    while True:
+        db = SessionLocal()
+        try:
+            stored = _db_get(db, "scheduler_next_run_at")
+            if stored:
+                try:
+                    candidate = datetime.fromisoformat(stored)
+                    target = candidate  # DB is the single source of truth
+                except Exception:
+                    pass
+        finally:
+            db.close()
+
+        remaining = (target - _now()).total_seconds()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(remaining, _TICK))
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -66,6 +99,14 @@ def _get_interval(db) -> int:
         return max(1, int(raw))
     except (ValueError, TypeError):
         return 30
+
+
+def _get_auto_tag_interval(db) -> int:
+    raw = _db_get(db, "auto_tag_interval_minutes") or str(cfg.auto_tag_interval_minutes)
+    try:
+        return max(1, int(raw))
+    except (ValueError, TypeError):
+        return 10
 
 
 def _auto_analyze_enabled(db) -> bool:
@@ -182,9 +223,17 @@ async def _run_cycle() -> None:
                     if not article or article.tags:
                         continue  # skip already-tagged articles
                     try:
-                        article.tags = await ai_extract_tags(article, db)
-                        db.commit()
-                        tag_ok += 1
+                        new_tags = await ai_extract_tags(article, db)
+                        if new_tags:
+                            article.tags = new_tags
+                            db.commit()
+                            tag_ok += 1
+                        else:
+                            logger.debug(
+                                "[scheduler] cycle #%d — auto-tag returned empty for article %d",
+                                cycle_num, aid,
+                            )
+                            tag_err += 1
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
@@ -311,10 +360,10 @@ async def run_scheduler() -> None:
                     db.close()
 
                 logger.info(
-                    "[scheduler] sleeping %d min — next cycle at %s",
+                    "[scheduler] sleeping %d min — next cycle at %s (polls DB every 15s for overrides)",
                     interval, next_run.strftime("%H:%M:%S"),
                 )
-                await asyncio.sleep(interval * 60)
+                await _sleep_until(next_run)
 
             # Run one fetch + analyse cycle.
             # Hard timeout prevents a hung feed from blocking the scheduler forever.
@@ -343,4 +392,107 @@ async def run_scheduler() -> None:
                 await asyncio.sleep(30)
             except asyncio.CancelledError:
                 logger.info("[scheduler] background task stopped cleanly (during error recovery)")
+                return
+
+
+# ── Secondary scheduler: backfill auto-tagging for untagged articles ──────────
+
+_AUTO_TAG_BACKFILL_CAP = 30   # max articles tagged per cycle (token-cost guard)
+
+
+async def _run_auto_tag_backfill() -> None:
+    """One pass: find untagged articles and tag them with the AI tagger.
+
+    Only articles whose category has auto-tagging enabled are considered (if
+    any categories are configured); otherwise nothing is done. Commits per
+    article so progress survives a mid-cycle cancel/restart.
+    """
+    db = SessionLocal()
+    try:
+        auto_tag_cats = _get_auto_tag_categories(db)
+        if not auto_tag_cats:
+            logger.debug("[auto-tag] no categories enabled — skipping backfill cycle")
+            return
+
+        from .tagger import ai_extract_tags
+
+        # Untagged = tags column NULL or an empty JSON array.
+        untagged = (
+            db.query(Article)
+            .filter(or_(Article.tags.is_(None), Article.tags == "[]"))
+            .filter(Article.category.in_(auto_tag_cats))
+            .order_by(Article.id.desc())
+            .limit(_AUTO_TAG_BACKFILL_CAP)
+            .all()
+        )
+        if not untagged:
+            logger.debug("[auto-tag] backfill: no untagged articles in enabled categories")
+            return
+
+        logger.info(
+            "[auto-tag] backfill: tagging %d untagged article(s) in categories %s",
+            len(untagged), sorted(auto_tag_cats),
+        )
+        tag_ok = tag_err = 0
+        for article in untagged:
+            try:
+                new_tags = await ai_extract_tags(article, db)
+                if new_tags:
+                    article.tags = new_tags
+                    db.commit()
+                    tag_ok += 1
+                else:
+                    tag_err += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                db.rollback()
+                logger.debug("[auto-tag] backfill failed for article %d: %s", article.id, exc)
+                tag_err += 1
+        logger.info("[auto-tag] backfill complete: %d tagged, %d errors", tag_ok, tag_err)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("[auto-tag] backfill cycle failed: %s", exc)
+    finally:
+        db.close()
+
+
+async def run_auto_tag_scheduler() -> None:
+    """Run the auto-tag backfill scheduler forever as an asyncio task.
+
+    Independent of the main fetch scheduler: every ``_AUTO_TAG_INTERVAL_MIN``
+    minutes it sweeps for articles that were never tagged (e.g. fetched while
+    auto-tag was off, or skipped by the per-cycle cap) and tags them.
+
+    The interval is read from the DB each loop (Settings UI → ``auto_tag_interval_minutes``),
+    so changes take effect on the next sweep without a restart. The first sweep is
+    delayed by one interval so it doesn't pile on top of the immediate startup
+    fetch cycle. Cancelled cleanly on shutdown.
+    """
+    logger.info("[auto-tag] backfill scheduler started")
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                interval = _get_auto_tag_interval(db)
+            finally:
+                db.close()
+            logger.debug("[auto-tag] sleeping %d min until next backfill sweep", interval)
+            await asyncio.sleep(interval * 60)
+            _AUTO_TAG_TIMEOUT = 15 * 60  # 15-minute hard cap per sweep
+            try:
+                await asyncio.wait_for(_run_auto_tag_backfill(), timeout=_AUTO_TAG_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.warning("[auto-tag] backfill sweep exceeded timeout — aborting this cycle")
+        except asyncio.CancelledError:
+            logger.info("[auto-tag] backfill scheduler stopped cleanly")
+            return
+        except Exception as exc:
+            logger.exception("[auto-tag] scheduler error — will retry in 60s: %s", exc)
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                logger.info("[auto-tag] backfill scheduler stopped cleanly (during error recovery)")
                 return

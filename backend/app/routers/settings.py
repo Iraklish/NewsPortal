@@ -9,7 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..config import DEFAULT_ASK_SYSTEM_PROMPT, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT, settings
+from ..config import (
+    DEFAULT_ASK_SYSTEM_PROMPT,
+    DEFAULT_CHAT_SYSTEM_PROMPT,
+    DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT,
+    DEFAULT_SUMMARY_SYSTEM_PROMPT,
+    settings,
+)
 from ..database import get_db
 from ..models import AppSettings
 from ..schemas import AppSettingsOut, KeyStatus, SettingsUpdate
@@ -42,6 +48,7 @@ _NON_SECRET_KEYS = [
     "custom_ai_model",
     "auto_analyze_enabled",
     "fetch_interval_minutes",
+    "auto_tag_interval_minutes",
 ]
 
 
@@ -87,9 +94,11 @@ def get_settings(db: Session = Depends(get_db)):
     chat_override = _db_get(db, "chat_system_prompt") or ""
     ask_override = _db_get(db, "ask_system_prompt") or ""
     dr_override = _db_get(db, "directed_report_system_prompt") or ""
+    summary_override = _db_get(db, "summary_system_prompt") or ""
     chat_effective = chat_override if chat_override.strip() else DEFAULT_CHAT_SYSTEM_PROMPT
     ask_effective = ask_override if ask_override.strip() else DEFAULT_ASK_SYSTEM_PROMPT
     dr_effective = dr_override if dr_override.strip() else DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT
+    summary_effective = summary_override if summary_override.strip() else DEFAULT_SUMMARY_SYSTEM_PROMPT
 
     auto_override = _db_get(db, "auto_analyze_enabled")
     if auto_override is not None:
@@ -106,6 +115,15 @@ def get_settings(db: Session = Depends(get_db)):
     else:
         fetch_interval = max(1, int(settings.fetch_interval_minutes))
 
+    tag_interval_override = _db_get(db, "auto_tag_interval_minutes")
+    if tag_interval_override:
+        try:
+            auto_tag_interval = max(1, int(tag_interval_override))
+        except (ValueError, TypeError):
+            auto_tag_interval = max(1, int(settings.auto_tag_interval_minutes))
+    else:
+        auto_tag_interval = max(1, int(settings.auto_tag_interval_minutes))
+
     return AppSettingsOut(
         **key_statuses,
         default_ai_provider=default_provider,
@@ -115,14 +133,18 @@ def get_settings(db: Session = Depends(get_db)):
         chat_system_prompt=chat_effective,
         ask_system_prompt=ask_effective,
         directed_report_system_prompt=dr_effective,
+        summary_system_prompt=summary_effective,
         chat_system_prompt_default=DEFAULT_CHAT_SYSTEM_PROMPT,
         ask_system_prompt_default=DEFAULT_ASK_SYSTEM_PROMPT,
         directed_report_system_prompt_default=DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT,
+        summary_system_prompt_default=DEFAULT_SUMMARY_SYSTEM_PROMPT,
         chat_system_prompt_customized=bool(chat_override.strip()),
         ask_system_prompt_customized=bool(ask_override.strip()),
         directed_report_system_prompt_customized=bool(dr_override.strip()),
+        summary_system_prompt_customized=bool(summary_override.strip()),
         auto_analyze_enabled=auto_analyze,
         fetch_interval_minutes=fetch_interval,
+        auto_tag_interval_minutes=auto_tag_interval,
     )
 
 
@@ -250,6 +272,7 @@ def set_auto_tag_categories(body: AutoTagCategoriesIn, db: Session = Depends(get
 
 _RESETTABLE_KEYS = {
     "chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt",
+    "summary_system_prompt",
     "custom_ai_endpoint", "custom_ai_model",
 }
 
@@ -272,9 +295,9 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
     updated_keys = []
     update_dict = body.model_dump(exclude_none=True)
 
-    _no_strip = {"chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt"}
+    _no_strip = {"chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt", "summary_system_prompt"}
     _bool_keys = {"auto_analyze_enabled"}
-    _int_keys = {"fetch_interval_minutes"}
+    _int_keys = {"fetch_interval_minutes", "auto_tag_interval_minutes"}
 
     for key, value in update_dict.items():
         if value is None:

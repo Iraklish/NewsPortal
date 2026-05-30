@@ -1,5 +1,6 @@
 """Manage RSS sources stored in the rss_sources table."""
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -7,13 +8,50 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..config import settings as app_settings
-from ..database import get_db
+from ..database import get_db, add_deleted_rss_urls, clear_deleted_rss_urls
 from ..models import AppSettings, RssSource
 from ..schemas import RssSourceCreate, RssSourceOut, RssSourceUpdate
 from ..services.rss_sources import RSS_FEEDS
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _db_set(db: Session, key: str, value: str) -> None:
+    row = db.query(AppSettings).filter(AppSettings.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(AppSettings(key=key, value=value))
+
+
+class SetNextRunBody(BaseModel):
+    next_run_at: str  # UTC ISO-8601 string from the browser
+
+
+@router.post("/set-next-run")
+def set_next_run(body: SetNextRunBody, db: Session = Depends(get_db)):
+    """Override when the background scheduler will next run.
+
+    The scheduler polls the DB every 15 s, so the change takes effect within
+    one tick — no server restart needed.
+    """
+    try:
+        # The browser sends a UTC ISO string (e.g. "2024-01-15T14:30:00.000Z")
+        target = datetime.fromisoformat(body.next_run_at.replace("Z", "+00:00"))
+        # Normalise to naive UTC — that is how the scheduler stores timestamps
+        target = target.astimezone(timezone.utc).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid datetime format — expected ISO-8601 UTC")
+
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    if target < now_utc - timedelta(minutes=1):
+        raise HTTPException(status_code=400, detail="Cannot schedule a run in the past")
+
+    _db_set(db, "scheduler_next_run_at", target.isoformat())
+    db.commit()
+    logger.info("[sources] next scheduler run manually set to %s UTC", target.strftime("%Y-%m-%d %H:%M:%S"))
+    return {"next_run_at": target.isoformat(), "ok": True}
 
 
 @router.get("/status")
@@ -120,6 +158,7 @@ def delete_source(source_id: int, db: Session = Depends(get_db)):
     src = db.query(RssSource).filter(RssSource.id == source_id).first()
     if not src:
         raise HTTPException(status_code=404, detail="Source not found")
+    add_deleted_rss_urls(db, [src.url])  # so the auto-seeder won't bring it back
     db.delete(src)
     db.commit()
     return {"deleted": True, "id": source_id}
@@ -205,6 +244,7 @@ def delete_category(category: str, db: Session = Depends(get_db)):
     rows = db.query(RssSource).filter(RssSource.category == cat).all()
     if not rows:
         raise HTTPException(status_code=404, detail=f"No feeds in category '{cat}'")
+    add_deleted_rss_urls(db, [s.url for s in rows])
     for s in rows:
         db.delete(s)
     db.commit()
@@ -221,6 +261,7 @@ def bulk_delete_sources(body: BulkIdsIn, db: Session = Depends(get_db)):
     if not body.ids:
         return {"deleted": 0}
     rows = db.query(RssSource).filter(RssSource.id.in_(body.ids)).all()
+    add_deleted_rss_urls(db, [src.url for src in rows])  # persist deletion across restarts
     for src in rows:
         db.delete(src)
     db.commit()
@@ -252,10 +293,15 @@ def bulk_fetch_sources(body: BulkIdsIn, db: Session = Depends(get_db)):
 
 @router.post("/reseed")
 def reseed_sources(db: Session = Depends(get_db)):
-    """Add any feeds from RSS_FEEDS that are missing from the DB (won't touch existing rows)."""
+    """Restore default feeds: add any from RSS_FEEDS missing from the DB.
+
+    This is an explicit "restore defaults" action, so it also clears any deletion
+    tombstones — pressing Reseed brings previously-deleted default feeds back.
+    """
     # Pre-load all existing URLs into a set to avoid N+1 queries and prevent
     # duplicate inserts when the same URL appears in multiple categories.
     existing_urls: set[str] = {row.url for row in db.query(RssSource.url).all()}
+    clear_deleted_rss_urls(db)  # explicit restore — forget prior deletions
     added = 0
     for category, urls in RSS_FEEDS.items():
         for url in urls:
@@ -263,6 +309,5 @@ def reseed_sources(db: Session = Depends(get_db)):
                 db.add(RssSource(url=url, category=category, enabled=True))
                 existing_urls.add(url)  # prevent double-add within the same batch
                 added += 1
-    if added:
-        db.commit()
+    db.commit()
     return {"added": added}

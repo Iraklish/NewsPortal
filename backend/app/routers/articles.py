@@ -77,6 +77,19 @@ def _apply_entertainment_filter(query, model):
     ))
 
 
+def _apply_time_window(query, model, hours: int):
+    """Restrict a query to articles whose effective date is within the last `hours`.
+
+    Effective date = COALESCE(published_at, fetched_at) — the same value shown on
+    the card. ``hours <= 0`` means "all time" (no filtering).
+    """
+    if not hours or hours <= 0:
+        return query
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
+    return query.filter(func.coalesce(model.published_at, model.fetched_at) >= cutoff)
+
+
 # ── Deduplication helpers ─────────────────────────────────────────────────────
 
 def _url_hash(url: str) -> str:
@@ -148,6 +161,7 @@ def count_articles(
     q: Optional[str] = Query(None),
     tag: Optional[str] = Query(None),
     untagged: bool = Query(False),
+    hours: int = Query(0, ge=0, description="Time window in hours; 0 = all time"),
     db: Session = Depends(get_db),
 ):
     """Total article count for the given filters (independent of paging)."""
@@ -157,6 +171,7 @@ def count_articles(
         query = _apply_entertainment_filter(query, Article)
     elif category:
         query = query.filter(Article.category == category)
+    query = _apply_time_window(query, Article, hours)
     if untagged:
         query = query.filter(
             or_(Article.tags.is_(None), Article.tags == "[]")
@@ -171,6 +186,10 @@ def count_articles(
                 Article.title.ilike(f"%{q}%"),
                 Article.content.ilike(f"%{q}%"),
                 Article.summary.ilike(f"%{q}%"),
+                text(
+                    "EXISTS (SELECT 1 FROM json_each(articles.tags)"
+                    " WHERE lower(value) LIKE lower(:qtag_cnt))"
+                ).bindparams(qtag_cnt=f"%{q}%"),
             )
         )
     return {"count": query.count()}
@@ -184,6 +203,7 @@ def list_articles(
     q: Optional[str] = Query(None),
     tag: Optional[str] = Query(None),
     untagged: bool = Query(False),
+    hours: int = Query(0, ge=0, description="Time window in hours; 0 = all time"),
     db: Session = Depends(get_db),
 ):
     query = db.query(Article)
@@ -192,6 +212,7 @@ def list_articles(
         query = _apply_entertainment_filter(query, Article)
     elif category:
         query = query.filter(Article.category == category)
+    query = _apply_time_window(query, Article, hours)
     if untagged:
         query = query.filter(
             or_(Article.tags.is_(None), Article.tags == "[]")
@@ -206,6 +227,10 @@ def list_articles(
                 Article.title.ilike(f"%{q}%"),
                 Article.content.ilike(f"%{q}%"),
                 Article.summary.ilike(f"%{q}%"),
+                text(
+                    "EXISTS (SELECT 1 FROM json_each(articles.tags)"
+                    " WHERE lower(value) LIKE lower(:qtag_lst))"
+                ).bindparams(qtag_lst=f"%{q}%"),
             )
         )
     # Effective date = min(published_at, fetched_at). Caps feeds that report future
@@ -381,9 +406,9 @@ async def bulk_auto_tag(
     Pass ``categories=telegram,world_news`` to restrict to specific categories.
     """
     from ..services.tagger import ai_extract_tags
+    # Match the same filter used by list_articles(untagged=True) so results are consistent.
     no_tags_filter = or_(
         Article.tags.is_(None),
-        Article.tags.cast(type_=Article.tags.type) == [],
         Article.tags == "[]",
     )
     query = db.query(Article).filter(no_tags_filter)
@@ -395,10 +420,19 @@ async def bulk_auto_tag(
     tagged = errors = 0
     for art in articles:
         try:
-            art.tags = await ai_extract_tags(art, db)
-            db.commit()
-            tagged += 1
-        except Exception:
+            new_tags = await ai_extract_tags(art, db)
+            if new_tags:
+                art.tags = new_tags
+                db.commit()
+                tagged += 1
+            else:
+                logger.debug("[bulk-tag] article %d: tagger returned no tags", art.id)
+                errors += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("[bulk-tag] article %d failed: %s", art.id, exc)
+            db.rollback()
             errors += 1
     return {"tagged": tagged, "errors": errors, "total": len(articles)}
 
@@ -426,6 +460,24 @@ async def auto_tag_by_ids(body: AutoTagByIdsIn, db: Session = Depends(get_db)):
             db.rollback()
             errors += 1
     return {"tagged": tagged, "errors": errors, "total": len(body.ids)}
+
+
+class BulkDeleteIn(BaseModel):
+    ids: list[int]
+
+
+@router.post("/bulk-delete")
+def bulk_delete_articles(body: BulkDeleteIn, db: Session = Depends(get_db)):
+    """Delete a specific list of articles by ID. Missing IDs are skipped."""
+    if not body.ids:
+        return {"deleted": 0, "total": 0}
+    deleted = (
+        db.query(Article)
+        .filter(Article.id.in_(body.ids))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": deleted, "total": len(body.ids)}
 
 
 @router.get("/{article_id}", response_model=ArticleOut)

@@ -137,8 +137,10 @@ class SettingsUpdate(BaseModel):
     chat_system_prompt: Optional[str] = None
     ask_system_prompt: Optional[str] = None
     directed_report_system_prompt: Optional[str] = None
+    summary_system_prompt: Optional[str] = None
     auto_analyze_enabled: Optional[bool] = None
     fetch_interval_minutes: Optional[int] = None
+    auto_tag_interval_minutes: Optional[int] = None
 
 
 class KeyStatus(BaseModel):
@@ -169,14 +171,18 @@ class AppSettingsOut(BaseModel):
     chat_system_prompt: str
     ask_system_prompt: str
     directed_report_system_prompt: str
+    summary_system_prompt: str
     chat_system_prompt_default: str
     ask_system_prompt_default: str
     directed_report_system_prompt_default: str
+    summary_system_prompt_default: str
     chat_system_prompt_customized: bool
     ask_system_prompt_customized: bool
     directed_report_system_prompt_customized: bool
+    summary_system_prompt_customized: bool
     auto_analyze_enabled: bool
     fetch_interval_minutes: int
+    auto_tag_interval_minutes: int
 
 
 # ── MindMap ───────────────────────────────────────────────────────────────────
@@ -213,6 +219,14 @@ class RssSourceUpdate(BaseModel):
 class MindMapRequest(BaseModel):
     subject: str
     aspects: List[str] = []
+    # Optional grounding: pull matching DB articles into the prompt as evidence.
+    category: Optional[str] = None
+    tag: Optional[str] = None
+    keyword: Optional[str] = None
+    time_window_hours: int = 0   # 0 = all time
+    max_articles: int = 30       # cap on grounding articles fed to the model
+    include_web: bool = False        # AI-native grounding (Gemini / Anthropic built-in web search)
+    include_web_search: bool = False # Explicit multi-engine search (Google/DDG/Bing)
 
 
 # ── TelegramSource ────────────────────────────────────────────────────────────
@@ -272,9 +286,10 @@ class DirectedReportRequest(BaseModel):
     tag: Optional[str] = None         # if set, filter DB articles to those carrying this tag
     include_web: bool = True          # AI-native grounding (Gemini / Anthropic)
     include_web_search: bool = False  # Explicit multi-engine search (Google/DDG/Bing)
-    time_window_hours: int = 24  # default: last 24h. Presets: 24, 48, 168 (1w), 336 (2w), 720 (1m)
+    time_window_hours: int = 24  # 0 = all time; otherwise last N hours
     max_web_results: int = 6
     fetch_web_content: bool = False  # if true, downloads full page text for top web results (slow)
+    language: str = ""               # "" / "English" → no change; other values → respond in that language
 
 
 class DirectedReportRef(BaseModel):

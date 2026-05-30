@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .database import SessionLocal, init_db
 from .logging_config import configure_logging
 from .routers import analysis, articles, logs, mindmap, search, settings, sources, stocks, telegram
-from .services.background_scheduler import run_scheduler
+from .services.background_scheduler import run_scheduler, run_auto_tag_scheduler
 
 
 @asynccontextmanager
@@ -24,15 +24,19 @@ async def lifespan(app: FastAPI):
     # Start the news-fetch scheduler as an asyncio background task.
     # It runs inside this process — no separate window or subprocess needed.
     scheduler_task = asyncio.create_task(run_scheduler())
+    # Secondary scheduler: every 10 min, backfill tags for untagged articles.
+    auto_tag_task = asyncio.create_task(run_auto_tag_scheduler())
     try:
         yield
     finally:
-        # Cancel the scheduler and wait for it to exit cleanly.
+        # Cancel both schedulers and wait for them to exit cleanly.
         scheduler_task.cancel()
-        try:
-            await scheduler_task
-        except asyncio.CancelledError:
-            pass
+        auto_tag_task.cancel()
+        for task in (scheduler_task, auto_tag_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="NewsPortal API", version="1.0.0", lifespan=lifespan)

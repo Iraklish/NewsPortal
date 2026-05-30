@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { mindmapApi, type MindMapOut, type MindMapAspect, type MindMapNode } from '@/lib/api'
+import { mindmapApi, articlesApi, type MindMapOut, type MindMapAspect, type MindMapNode } from '@/lib/api'
 import {
   Loader2, Trash2, Network, ChevronRight, ChevronDown, Search, X,
   Maximize2, Minimize2, ChevronsDown, ChevronsUp, Plus, Sparkles, FileText, FolderTree,
@@ -11,6 +11,21 @@ import clsx from 'clsx'
 const DEFAULT_ASPECTS = [
   'Economics', 'Politics', 'Technology', 'Risk', 'Society',
   'Markets', 'Geopolitics', 'Environment', 'Innovation', 'Legal',
+]
+
+/** Time-window options for grounding (value in hours; 0 = all time). */
+const TIME_WINDOWS: { label: string; hours: number }[] = [
+  { label: 'All time', hours: 0 },
+  { label: 'Last 1 hour', hours: 1 },
+  { label: 'Last 2 hours', hours: 2 },
+  { label: 'Last 6 hours', hours: 6 },
+  { label: 'Last 12 hours', hours: 12 },
+  { label: 'Last 24 hours', hours: 24 },
+  { label: 'Last 2 days', hours: 48 },
+  { label: 'Last week', hours: 168 },
+  { label: 'Last 2 weeks', hours: 336 },
+  { label: 'Last month', hours: 720 },
+  { label: 'Last 2 months', hours: 1440 },
 ]
 
 function fmt(dateStr: string) {
@@ -44,6 +59,16 @@ export default function MindMapPage() {
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
 
+  // Grounding filters — feed matching DB articles into the prompt as evidence
+  const [gCategory, setGCategory] = useState('')
+  const [gTag, setGTag] = useState('')
+  const [gKeyword, setGKeyword] = useState('')
+  const [gHours, setGHours] = useState(0)
+  const [webSearch, setWebSearch] = useState(false)
+  const [aiGrounding, setAiGrounding] = useState(false)
+  const [allCategories, setAllCategories] = useState<string[]>([])
+  const [allTags, setAllTags] = useState<string[]>([])
+
   // Map state
   const [current, setCurrent] = useState<MindMapOut | null>(null)
   const [savedMaps, setSavedMaps] = useState<MindMapOut[]>([])
@@ -56,6 +81,8 @@ export default function MindMapPage() {
 
   useEffect(() => {
     mindmapApi.list().then(setSavedMaps).catch(() => {})
+    articlesApi.categories().then(setAllCategories).catch(() => {})
+    articlesApi.tags().then(setAllTags).catch(() => {})
   }, [])
 
   // ESC exits fullscreen
@@ -97,7 +124,14 @@ export default function MindMapPage() {
     setError('')
     setCurrent(null)
     try {
-      const res = await mindmapApi.generate(subject.trim(), Array.from(selectedAspects))
+      const res = await mindmapApi.generate(subject.trim(), Array.from(selectedAspects), {
+        category: gCategory || undefined,
+        tag: gTag || undefined,
+        keyword: gKeyword.trim() || undefined,
+        time_window_hours: gHours || undefined,
+        include_web: aiGrounding || undefined,
+        include_web_search: webSearch || undefined,
+      })
       loadMap(res)
       const updated = await mindmapApi.list()
       setSavedMaps(updated)
@@ -207,6 +241,97 @@ export default function MindMapPage() {
                 />
                 <button onClick={addCustom} className="p-1.5 text-slate-400 hover:text-white"><Plus size={12} /></button>
               </div>
+
+              {/* Grounding filters — feed matching DB articles into the prompt */}
+              <div className="mt-3 pt-3 border-t border-[#1e2433]">
+                <p className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                  Ground on news <span className="text-slate-600 normal-case font-normal">(optional)</span>
+                </p>
+                <div className="space-y-1.5">
+                  <select
+                    value={gCategory}
+                    onChange={e => setGCategory(e.target.value)}
+                    className={clsx(
+                      'w-full bg-[#0a0f1e] border rounded px-2 py-1 text-[11px] focus:outline-none focus:border-indigo-500',
+                      gCategory ? 'border-indigo-500/50 text-indigo-300' : 'border-[#1e2433] text-slate-400',
+                    )}
+                  >
+                    <option value="">All categories</option>
+                    {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <select
+                    value={gTag}
+                    onChange={e => setGTag(e.target.value)}
+                    className={clsx(
+                      'w-full bg-[#0a0f1e] border rounded px-2 py-1 text-[11px] focus:outline-none focus:border-indigo-500',
+                      gTag ? 'border-indigo-500/50 text-indigo-300' : 'border-[#1e2433] text-slate-400',
+                    )}
+                  >
+                    <option value="">Any tag</option>
+                    {allTags.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <input
+                    value={gKeyword}
+                    onChange={e => setGKeyword(e.target.value)}
+                    placeholder="Keyword (title/summary/content)…"
+                    className="w-full bg-[#0a0f1e] border border-[#1e2433] rounded px-2 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  />
+                  <select
+                    value={gHours}
+                    onChange={e => setGHours(Number(e.target.value))}
+                    className={clsx(
+                      'w-full bg-[#0a0f1e] border rounded px-2 py-1 text-[11px] focus:outline-none focus:border-indigo-500',
+                      gHours > 0 ? 'border-indigo-500/50 text-indigo-300' : 'border-[#1e2433] text-slate-400',
+                    )}
+                  >
+                    {TIME_WINDOWS.map(w => <option key={w.hours} value={w.hours}>{w.label}</option>)}
+                  </select>
+                </div>
+                {(gCategory || gTag || gKeyword.trim() || gHours > 0) && (
+                  <button
+                    onClick={() => { setGCategory(''); setGTag(''); setGKeyword(''); setGHours(0) }}
+                    className="mt-1.5 text-[10px] text-slate-500 hover:text-white inline-flex items-center gap-1"
+                  >
+                    <X size={9} /> Clear grounding filters
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-3 space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => setAiGrounding(v => !v)}
+                  className={clsx(
+                    'w-full flex items-center gap-2 px-2.5 py-1.5 rounded border text-xs transition-colors',
+                    aiGrounding
+                      ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-300'
+                      : 'border-[#1e2433] text-slate-400 hover:text-white',
+                  )}
+                >
+                  <Sparkles size={12} />
+                  <span className="flex-1 text-left">AI web grounding</span>
+                  <span className={clsx('text-[10px]', aiGrounding ? 'text-indigo-300' : 'text-slate-600')}>
+                    {aiGrounding ? 'ON' : 'OFF'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWebSearch(v => !v)}
+                  className={clsx(
+                    'w-full flex items-center gap-2 px-2.5 py-1.5 rounded border text-xs transition-colors',
+                    webSearch
+                      ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-300'
+                      : 'border-[#1e2433] text-slate-400 hover:text-white',
+                  )}
+                >
+                  <Search size={12} />
+                  <span className="flex-1 text-left">Live web search</span>
+                  <span className={clsx('text-[10px]', webSearch ? 'text-indigo-300' : 'text-slate-600')}>
+                    {webSearch ? 'ON' : 'OFF'}
+                  </span>
+                </button>
+              </div>
+
               <button
                 onClick={generate}
                 disabled={generating || !subject.trim() || selectedAspects.size === 0}

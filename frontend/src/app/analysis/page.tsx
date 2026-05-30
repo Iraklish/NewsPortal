@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { analysisApi, articlesApi, type DirectedReport } from '@/lib/api'
 import ImpactBadge from '@/components/ImpactBadge'
+import { useLanguage } from '@/lib/language'
 import {
   Sparkles, Loader2, ExternalLink, Trash2, AlertCircle, Globe, Database,
   TrendingUp, TrendingDown, Zap, ChevronRight, RefreshCw, Search,
@@ -17,6 +18,7 @@ function fmt(s?: string): string {
 }
 
 
+
 const TIME_WINDOWS: { label: string; hours: number }[] = [
   { label: 'Last 1 hour', hours: 1 },
   { label: 'Last 2 hours', hours: 2 },
@@ -28,6 +30,10 @@ const TIME_WINDOWS: { label: string; hours: number }[] = [
   { label: 'Last 1 week', hours: 168 },
   { label: 'Last 2 weeks', hours: 336 },
   { label: 'Last 1 month', hours: 720 },
+  { label: 'Last 2 months', hours: 1440 },
+  { label: 'Last 6 months', hours: 4380 },
+  { label: 'Last 1 year', hours: 8760 },
+  { label: 'All time', hours: 0 },
 ]
 
 export default function AnalysisPage() {
@@ -40,6 +46,7 @@ export default function AnalysisPage() {
   const [includeWeb, setIncludeWeb] = useState(false)
   const [includeWebSearch, setIncludeWebSearch] = useState(false)
   const [timeWindowHours, setTimeWindowHours] = useState(2)
+  const { language } = useLanguage()
 
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
@@ -104,6 +111,7 @@ export default function AnalysisPage() {
         include_web: includeWeb,
         include_web_search: includeWebSearch,
         time_window_hours: timeWindowHours,
+        language: language !== 'English' ? language : undefined,
       })
       setCurrent(report)
       loadHistory()

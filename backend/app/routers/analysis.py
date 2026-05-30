@@ -1,12 +1,15 @@
+import json
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from pydantic import BaseModel
+from sqlalchemy import and_, or_, text as sa_text
 from sqlalchemy.orm import Session
 
-from ..config import DEFAULT_ASK_SYSTEM_PROMPT, DEFAULT_CHAT_SYSTEM_PROMPT
+from ..config import DEFAULT_ASK_SYSTEM_PROMPT, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_SUMMARY_SYSTEM_PROMPT
 from ..database import get_db
 from ..models import Analysis, AppSettings, Article, DirectedReport
 from ..schemas import (
@@ -49,6 +52,24 @@ def list_analyses(
         .limit(limit)
         .all()
     )
+
+
+# ── Summary request schema ────────────────────────────────────────────────────
+
+class SummaryRequest(BaseModel):
+    filter_type: str = "keyword"  # "tag" | "category" | "keyword"
+    filter_value: str = ""
+    time_window_hours: int = 24
+    max_articles: int = 50      # 0 = no hard limit (up to 5000)
+    custom_prompt: Optional[str] = None  # extra instructions appended to system prompt
+    language: str = ""          # "" / "English" → no change; other values → respond in that language
+    article_ids: Optional[list[int]] = None  # if set, summarize exactly these articles (ignores filters/window)
+
+
+class SummaryAskRequest(BaseModel):
+    summary: str                # full summary text as context
+    question: str
+    history: list = []          # [{"role": "user"|"assistant", "content": "..."}]
 
 
 # NOTE: fixed-path routes must be declared BEFORE /{analysis_id} so that
@@ -156,6 +177,199 @@ async def ask_about_report(
     return {"response": response_text}
 
 
+@router.post("/summary")
+async def generate_summary(
+    body: SummaryRequest,
+    db: Session = Depends(get_db),
+):
+    """AI summary of articles — either an explicit selection (article_ids) or a
+    tag / category / keyword filter over a time window."""
+    fv = body.filter_value.strip()
+    selection_mode = bool(body.article_ids)
+
+    if selection_mode:
+        # ── Summarize an explicit set of selected articles ───────────────────
+        ids = body.article_ids or []
+        rows = db.query(Article).filter(Article.id.in_(ids)).all()
+        # Preserve the caller's selection order
+        by_id = {a.id: a for a in rows}
+        articles = [by_id[i] for i in ids if i in by_id]
+        if not articles:
+            raise HTTPException(status_code=404, detail="None of the selected articles were found")
+    else:
+        if body.filter_type not in ("tag", "category", "keyword"):
+            raise HTTPException(status_code=400, detail="filter_type must be tag, category, or keyword")
+
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=body.time_window_hours)
+        query = db.query(Article).filter(
+            or_(
+                and_(Article.published_at.isnot(None), Article.published_at >= cutoff),
+                and_(Article.published_at.is_(None), Article.fetched_at >= cutoff),
+            )
+        )
+
+        # ── Explicit filter (tag / category / keyword) ───────────────────────────
+        if fv:
+            if body.filter_type == "tag":
+                query = query.filter(
+                    sa_text(
+                        "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) = lower(:tv))"
+                    ).bindparams(tv=fv)
+                )
+            elif body.filter_type == "category":
+                query = query.filter(Article.category == fv)
+            else:  # keyword
+                pat = f"%{fv}%"
+                query = query.filter(or_(
+                    Article.title.ilike(pat),
+                    Article.content.ilike(pat),
+                    Article.summary.ilike(pat),
+                ))
+
+        limit_val = body.max_articles if body.max_articles > 0 else 5000
+        articles = (
+            query
+            .order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
+            .limit(limit_val)
+            .all()
+        )
+
+        if not articles:
+            detail = (
+                f"No articles found for {body.filter_type}='{fv}' in the last {body.time_window_hours}h"
+                if fv else
+                f"No articles found in the last {body.time_window_hours}h"
+            )
+            raise HTTPException(status_code=404, detail=detail)
+
+    # Build per-article context blocks (capped at 500 chars each)
+    context_lines: list[str] = []
+    for i, a in enumerate(articles, 1):
+        published = a.published_at.isoformat() if a.published_at else "unknown"
+        excerpt = (a.summary or a.content or "")[:500]
+        context_lines.append(
+            f"[{i}] {a.title or '(no title)'}\n"
+            f"    Source: {a.source or 'unknown'} | Published: {published}\n"
+            f"    {excerpt}"
+        )
+    context_block = "\n\n".join(context_lines)
+
+    # ── System prompt ─────────────────────────────────────────────────────────
+    # Base: DB override → built-in default
+    _sp_row = db.query(AppSettings).filter(AppSettings.key == "summary_system_prompt").first()
+    _custom_sp = (_sp_row.value or "").strip() if _sp_row else ""
+    system = _custom_sp if _custom_sp else DEFAULT_SUMMARY_SYSTEM_PROMPT
+
+    # Extra instructions (format / tone / focus) appended verbatim
+    if body.custom_prompt and body.custom_prompt.strip():
+        system += "\n\nAdditional instructions for this run:\n" + body.custom_prompt.strip()
+
+    # Language override — ALWAYS pin the output language so the AI doesn't mirror
+    # the (possibly foreign) source articles. Default / "English" → force English.
+    _LANG_INSTRUCTIONS: dict[str, str] = {
+        "Hebrew":   "Respond entirely in Hebrew (עברית).",
+        "Russian":  "Respond entirely in Russian (Русский).",
+        "Georgian": "Respond entirely in Georgian (ქართული).",
+        "French":   "Respond entirely in French (Français).",
+        "German":   "Respond entirely in German (Deutsch).",
+        "Arabic":   "Respond entirely in Arabic (العربية).",
+        "Spanish":  "Respond entirely in Spanish (Español).",
+    }
+    lang = (body.language or "").strip()
+    if lang and lang not in ("English", "english"):
+        lang_instruction = _LANG_INSTRUCTIONS.get(lang, f"Respond entirely in {lang}.")
+    else:
+        lang_instruction = (
+            "Respond entirely in English, even when the source articles are in "
+            "another language."
+        )
+    system += f"\n\n{lang_instruction}"
+
+    # Header tells the AI what it's looking at
+    if selection_mode:
+        header = f"Summarize the following {len(articles)} selected articles."
+    elif fv:
+        header = f"Summarize the following {len(articles)} articles about {body.filter_type} \"{fv}\"."
+    else:
+        header = f"Summarize the following {len(articles)} recent articles."
+
+    user = f"{header}\n\n{context_block}"
+
+    try:
+        raw = await call_ai(system=system, user=user, max_tokens=2000, db=db)
+    except Exception as exc:
+        logger.error("Summary AI call failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+
+    # Parse JSON response
+    cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+    s_idx = cleaned.find("{"); e_idx = cleaned.rfind("}")
+    if s_idx != -1 and e_idx != -1:
+        cleaned = cleaned[s_idx:e_idx + 1]
+    try:
+        data = json.loads(cleaned)
+    except Exception:
+        data = {"summary": raw, "key_themes": [], "notable_sources": [], "time_span": ""}
+
+    sources = [
+        {
+            "title": a.title,
+            "url": a.url,
+            "source": a.source,
+            "published_at": a.published_at.isoformat() if a.published_at else None,
+        }
+        for a in articles[:30]
+    ]
+
+    return {
+        "summary": data.get("summary", ""),
+        "key_themes": data.get("key_themes", []),
+        "notable_sources": data.get("notable_sources", []),
+        "time_span": data.get("time_span", ""),
+        "article_count": len(articles),
+        "sources": sources,
+        "filter_type": "selection" if selection_mode else (body.filter_type if fv else "all"),
+        "filter_value": f"{len(articles)} selected articles" if selection_mode else (fv or "all recent articles"),
+    }
+
+
+@router.post("/summary/ask")
+async def ask_about_summary(
+    body: SummaryAskRequest,
+    db: Session = Depends(get_db),
+):
+    """Answer follow-up questions about a generated summary."""
+    if not body.question.strip():
+        raise HTTPException(status_code=400, detail="question is required")
+
+    context = (body.summary or "")[:10000]  # cap context window usage
+    system = (
+        "You are a knowledgeable analyst assistant. "
+        "The user generated a summary of recent news/messages and is asking follow-up questions about it. "
+        "Answer based strictly on the summary content below; draw on broader knowledge only when the "
+        "summary is insufficient, and be explicit that you are doing so. "
+        "Be concise: 2–5 sentences unless more detail is clearly needed.\n\n"
+        f"=== SUMMARY ===\n{context}"
+    )
+
+    history_lines = [
+        f"{m['role'].capitalize()}: {m['content']}"
+        for m in (body.history or [])[-12:]
+        if isinstance(m, dict) and m.get("role") and m.get("content")
+    ]
+    user_prompt = body.question.strip()
+    if history_lines:
+        user_prompt = "Conversation history:\n" + "\n".join(history_lines) + f"\n\nQuestion: {user_prompt}"
+
+    try:
+        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+    except Exception as exc:
+        logger.error("Summary ask AI call failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+
+    return {"response": response_text}
+
+
 @router.get("/{analysis_id}", response_model=AnalysisOut)
 def get_analysis(analysis_id: int, db: Session = Depends(get_db)):
     analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
@@ -198,7 +412,7 @@ async def analyze_single_article(
 @router.get("/directed/preview")
 def directed_preview(
     focus: str = Query(..., min_length=1),
-    time_window_hours: int = Query(24, ge=1, le=24 * 365),
+    time_window_hours: int = Query(24, ge=0, le=24 * 365 * 10),  # 0 = all time
     category: Optional[str] = Query(None),
     tag: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -228,6 +442,7 @@ async def directed_report(
             time_window_hours=body.time_window_hours,
             max_web_results=body.max_web_results,
             fetch_web_content=body.fetch_web_content,
+            language=body.language or "",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

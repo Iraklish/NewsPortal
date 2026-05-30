@@ -7,16 +7,19 @@ import {
   sourcesApi,
   type Article,
   type Analysis,
+  type SummaryResponse,
 } from '@/lib/api'
 import ImpactBadge from '@/components/ImpactBadge'
 import MessageContent from '@/components/MessageContent'
+import SummaryMarkdown from '@/components/SummaryMarkdown'
 import {
   RefreshCw, Search, X, ExternalLink, Loader2, Sparkles,
   Send, ChevronDown, ChevronLeft, ChevronRight, Clock, Plus, BookOpen, Globe, Maximize2, Minimize2,
-  CheckSquare, Square, Tag, LayoutGrid, Rows3,
+  CheckSquare, Square, Tag, LayoutGrid, Rows3, Trash2, ScrollText,
 } from 'lucide-react'
 import clsx from 'clsx'
 import AddArticleModal from '@/components/AddArticleModal'
+import { useLanguage } from '@/lib/language'
 
 /** Strip HTML tags and decode common entities for safe plain-text display. */
 function stripHtml(html: string): string {
@@ -34,6 +37,21 @@ function stripHtml(html: string): string {
 
 /** Sentinel value used in `tag` state to mean "articles with no tags". */
 const TAG_NONE = '__none__'
+
+/** Time-window filter options (value in hours; 0 = all time). */
+const TIME_WINDOWS: { label: string; hours: number }[] = [
+  { label: 'All time', hours: 0 },
+  { label: 'Last 1 hour', hours: 1 },
+  { label: 'Last 2 hours', hours: 2 },
+  { label: 'Last 6 hours', hours: 6 },
+  { label: 'Last 12 hours', hours: 12 },
+  { label: 'Last 24 hours', hours: 24 },
+  { label: 'Last 2 days', hours: 48 },
+  { label: 'Last week', hours: 168 },
+  { label: 'Last 2 weeks', hours: 336 },
+  { label: 'Last month', hours: 720 },
+  { label: 'Last 2 months', hours: 1440 },
+]
 
 const ASPECT_PRESETS = [
   'Summary',
@@ -74,6 +92,7 @@ export default function NewsPage() {
   const [category, setCategory] = useState<string>('')
   const [allTags, setAllTags] = useState<string[]>([])
   const [tag, setTag] = useState<string>('')
+  const [hours, setHours] = useState<number>(0)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -85,6 +104,12 @@ export default function NewsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [bulkTagging, setBulkTagging] = useState(false)
   const [bulkTagMsg, setBulkTagMsg] = useState('')
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [summarizing, setSummarizing] = useState(false)
+  const [summaryData, setSummaryData] = useState<SummaryResponse | null>(null)
+  const [summaryError, setSummaryError] = useState('')
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const { apiLanguage } = useLanguage()
   const [page, setPage] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -116,12 +141,13 @@ export default function NewsPage() {
     try { setStatus(await sourcesApi.status()) } catch {}
   }
 
-  async function load(params?: { category?: string; q?: string; tag?: string; limit?: number; page?: number }) {
+  async function load(params?: { category?: string; q?: string; tag?: string; hours?: number; limit?: number; page?: number }) {
     setLoading(true)
     setLoadError(null)
     const effCategory = params?.category ?? category
     const effQuery = params?.q ?? query
     const effTag = params?.tag !== undefined ? params.tag : tag
+    const effHours = params?.hours !== undefined ? params.hours : hours
     const effLimit = params?.limit ?? (gridCols * gridRows)
     const effPage = params?.page !== undefined ? params.page : page
     const skip = effPage * effLimit
@@ -132,11 +158,13 @@ export default function NewsPage() {
           skip, limit: effLimit, category: effCategory, q: effQuery,
           tag: isUntagged ? undefined : effTag,
           untagged: isUntagged || undefined,
+          hours: effHours || undefined,
         }),
         articlesApi.count({
           category: effCategory, q: effQuery,
           tag: isUntagged ? undefined : effTag,
           untagged: isUntagged || undefined,
+          hours: effHours || undefined,
         }),
       ])
       setArticles(data)
@@ -197,6 +225,12 @@ export default function NewsPage() {
     load({ tag: t, category, q: query, page: 0 })
   }
 
+  function pickWindow(h: number) {
+    setHours(h)
+    setPage(0)
+    load({ hours: h, category, q: query, tag, page: 0 })
+  }
+
   async function refreshFeeds() {
     setRefreshing(true)
     setRefreshMsg('')
@@ -240,6 +274,47 @@ export default function NewsPage() {
     }
   }
 
+  async function bulkDeleteSelected() {
+    if (selectedIds.size === 0) return
+    const n = selectedIds.size
+    if (!window.confirm(`Delete ${n} selected article${n === 1 ? '' : 's'}? This cannot be undone.`)) return
+    setBulkDeleting(true)
+    setBulkTagMsg('')
+    try {
+      const res = await articlesApi.deleteByIds(Array.from(selectedIds))
+      setBulkTagMsg(`Deleted ${res.deleted} article${res.deleted === 1 ? '' : 's'}`)
+      setSelectedIds(new Set())
+      if (selected && selectedIds.has(selected.id)) setSelected(null)
+      await load()
+      reloadTags()
+    } catch (e: unknown) {
+      setBulkTagMsg('Error: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setBulkDeleting(false)
+      setTimeout(() => setBulkTagMsg(''), 5000)
+    }
+  }
+
+  async function summarizeSelected() {
+    if (selectedIds.size === 0) return
+    setSummarizing(true)
+    setSummaryError('')
+    setSummaryData(null)
+    setSummaryOpen(true)
+    try {
+      const res = await analysisApi.summarize({
+        article_ids: Array.from(selectedIds),
+        max_articles: 0,
+        language: apiLanguage,
+      })
+      setSummaryData(res)
+    } catch (e: unknown) {
+      setSummaryError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSummarizing(false)
+    }
+  }
+
   function relTime(iso?: string | null): string {
     if (!iso) return 'never'
     const ms = iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso) ? new Date(iso).getTime() : new Date(iso + 'Z').getTime()
@@ -268,7 +343,7 @@ export default function NewsPage() {
             News
             {totalCount != null && (
               <span className="text-xs font-normal px-2 py-0.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded-full">
-                {totalCount.toLocaleString()}{(category || query) ? ' matching' : ' total'}
+                {totalCount.toLocaleString()}{(category || query || tag || hours > 0) ? ' matching' : ' total'}
               </span>
             )}
           </h1>
@@ -323,7 +398,7 @@ export default function NewsPage() {
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Search title, summary, or content…"
+            placeholder="Search title, summary, content, or tag…"
             className="w-full bg-[#0d1117] border border-[#1e2433] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
@@ -334,6 +409,19 @@ export default function NewsPage() {
         >
           <option value="">All Categories</option>
           {categories.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select
+          value={hours}
+          onChange={e => pickWindow(Number(e.target.value))}
+          title="Filter by how recently articles were published"
+          className={clsx(
+            'bg-[#0d1117] border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500',
+            hours > 0 ? 'border-indigo-500/50 text-indigo-300' : 'border-[#1e2433] text-slate-300',
+          )}
+        >
+          {TIME_WINDOWS.map(w => (
+            <option key={w.hours} value={w.hours}>{w.label}</option>
+          ))}
         </select>
         <TagFilter value={tag} onChange={pickTag} allTags={allTags} />
       </div>
@@ -409,12 +497,28 @@ export default function NewsPage() {
           <div className="flex-1" />
           {bulkTagMsg && <span className="text-xs text-teal-400 flex-shrink-0">{bulkTagMsg}</span>}
           <button
+            onClick={summarizeSelected}
+            disabled={bulkTagging || bulkDeleting || summarizing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 disabled:opacity-50 border border-indigo-500/30 rounded text-xs text-indigo-300 font-medium transition-colors flex-shrink-0"
+          >
+            {summarizing ? <Loader2 size={11} className="animate-spin" /> : <ScrollText size={11} />}
+            Summarize selected
+          </button>
+          <button
             onClick={bulkAutoTagSelected}
-            disabled={bulkTagging}
+            disabled={bulkTagging || bulkDeleting || summarizing}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600/20 hover:bg-teal-600/40 disabled:opacity-50 border border-teal-500/30 rounded text-xs text-teal-300 font-medium transition-colors flex-shrink-0"
           >
             {bulkTagging ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
             Auto-tag selected
+          </button>
+          <button
+            onClick={bulkDeleteSelected}
+            disabled={bulkTagging || bulkDeleting || summarizing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 disabled:opacity-50 border border-red-500/30 rounded text-xs text-red-300 font-medium transition-colors flex-shrink-0"
+          >
+            {bulkDeleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+            Delete selected
           </button>
         </div>
       )}
@@ -537,6 +641,64 @@ export default function NewsPage() {
           onClose={() => setAdding(false)}
           onAdded={() => { load(); articlesApi.categories().then(setCategories).catch(() => {}) }}
         />
+      )}
+
+      {summaryOpen && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center p-4 md:p-8 overflow-y-auto"
+          onClick={() => setSummaryOpen(false)}
+        >
+          <div
+            className="bg-[#0d1117] border border-[#1e2433] rounded-2xl w-full max-w-3xl my-auto shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#1e2433]">
+              <div className="flex items-center gap-2 min-w-0">
+                <ScrollText size={16} className="text-indigo-400 flex-shrink-0" />
+                <h2 className="text-sm font-bold text-white truncate">
+                  Summary of {summaryData?.article_count ?? selectedIds.size} selected article{(summaryData?.article_count ?? selectedIds.size) === 1 ? '' : 's'}
+                </h2>
+              </div>
+              <button
+                onClick={() => setSummaryOpen(false)}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors flex-shrink-0"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 max-h-[70vh] overflow-y-auto">
+              {summarizing && (
+                <div className="flex items-center gap-2 text-sm text-slate-400 py-8 justify-center">
+                  <Loader2 size={16} className="animate-spin" />
+                  Generating summary…
+                </div>
+              )}
+              {!summarizing && summaryError && (
+                <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+                  {summaryError}
+                </div>
+              )}
+              {!summarizing && summaryData && (
+                <>
+                  <SummaryMarkdown content={summaryData.summary} />
+                  {summaryData.key_themes?.length > 0 && (
+                    <div className="mt-5 pt-4 border-t border-[#1e2433]">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Key themes</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {summaryData.key_themes.map((t, i) => (
+                          <span key={i} className="px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded text-xs text-indigo-300">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

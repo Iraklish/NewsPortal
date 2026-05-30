@@ -81,6 +81,7 @@ export interface DirectedReportRequest {
   time_window_hours?: number
   max_web_results?: number
   fetch_web_content?: boolean
+  language?: string
 }
 
 export interface DirectedReportRef {
@@ -194,14 +195,18 @@ export interface AppSettingsOut {
   chat_system_prompt: string
   ask_system_prompt: string
   directed_report_system_prompt: string
+  summary_system_prompt: string
   chat_system_prompt_default: string
   ask_system_prompt_default: string
   directed_report_system_prompt_default: string
+  summary_system_prompt_default: string
   chat_system_prompt_customized: boolean
   ask_system_prompt_customized: boolean
   directed_report_system_prompt_customized: boolean
+  summary_system_prompt_customized: boolean
   auto_analyze_enabled: boolean
   fetch_interval_minutes: number
+  auto_tag_interval_minutes: number
 }
 
 export interface SettingsUpdate {
@@ -227,8 +232,38 @@ export interface SettingsUpdate {
   chat_system_prompt?: string
   ask_system_prompt?: string
   directed_report_system_prompt?: string
+  summary_system_prompt?: string
   auto_analyze_enabled?: boolean
   fetch_interval_minutes?: number
+  auto_tag_interval_minutes?: number
+}
+
+export interface SummaryRequest {
+  filter_type?: 'tag' | 'category' | 'keyword'
+  filter_value?: string
+  time_window_hours?: number
+  max_articles?: number   // 0 = All (up to 5000)
+  custom_prompt?: string  // extra instructions appended to system prompt
+  language?: string       // "" / "English" → no change; other values → respond in that language
+  article_ids?: number[]  // if set, summarize exactly these articles (ignores filters/window)
+}
+
+export interface SummarySourceRef {
+  title?: string
+  url: string
+  source?: string
+  published_at?: string
+}
+
+export interface SummaryResponse {
+  summary: string
+  key_themes: string[]
+  notable_sources: string[]
+  time_span: string
+  article_count: number
+  sources: SummarySourceRef[]
+  filter_type: string
+  filter_value: string
 }
 
 export interface MindMapNode {
@@ -287,7 +322,7 @@ export const articlesApi = {
     })
   },
 
-  list(params?: { skip?: number; limit?: number; category?: string; q?: string; tag?: string; untagged?: boolean }) {
+  list(params?: { skip?: number; limit?: number; category?: string; q?: string; tag?: string; untagged?: boolean; hours?: number }) {
     const qp = new URLSearchParams()
     if (params?.skip !== undefined) qp.set('skip', String(params.skip))
     if (params?.limit !== undefined) qp.set('limit', String(params.limit))
@@ -295,6 +330,7 @@ export const articlesApi = {
     if (params?.q) qp.set('q', params.q)
     if (params?.tag) qp.set('tag', params.tag)
     if (params?.untagged) qp.set('untagged', 'true')
+    if (params?.hours) qp.set('hours', String(params.hours))
     const qs = qp.toString()
     return request<Article[]>(`/articles${qs ? '?' + qs : ''}`)
   },
@@ -307,12 +343,13 @@ export const articlesApi = {
     return request<string[]>('/articles/tags')
   },
 
-  count(params?: { category?: string; q?: string; tag?: string; untagged?: boolean }) {
+  count(params?: { category?: string; q?: string; tag?: string; untagged?: boolean; hours?: number }) {
     const qp = new URLSearchParams()
     if (params?.category) qp.set('category', params.category)
     if (params?.q) qp.set('q', params.q)
     if (params?.tag) qp.set('tag', params.tag)
     if (params?.untagged) qp.set('untagged', 'true')
+    if (params?.hours) qp.set('hours', String(params.hours))
     const qs = qp.toString()
     return request<{ count: number }>(`/articles/count${qs ? '?' + qs : ''}`)
   },
@@ -425,6 +462,17 @@ export const articlesApi = {
       },
     )
   },
+
+  deleteByIds(ids: number[]) {
+    return request<{ deleted: number; total: number }>(
+      '/articles/bulk-delete',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      },
+    )
+  },
 }
 
 // ─── Analysis ─────────────────────────────────────────────────────────────────
@@ -497,6 +545,22 @@ export const analysisApi = {
 
   chat(req: { message: string; history?: { role: string; content: string }[]; use_web?: boolean; web_query?: string }) {
     return request<ChatResponse>('/analysis/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+  },
+
+  summarize(req: SummaryRequest) {
+    return request<SummaryResponse>('/analysis/summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+  },
+
+  summarizeAsk(req: { summary: string; question: string; history: Array<{ role: string; content: string }> }) {
+    return request<{ response: string }>('/analysis/summary/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
@@ -644,6 +708,14 @@ export const sourcesApi = {
       next_fetch_at?: string | null
       fetch_interval_minutes: number
     }>('/sources/status')
+  },
+
+  setNextRun(utcIso: string) {
+    return request<{ next_run_at: string; ok: boolean }>('/sources/set-next-run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ next_run_at: utcIso }),
+    })
   },
 }
 
@@ -850,11 +922,22 @@ export const mindmapApi = {
     return request<MindMapOut[]>('/mindmap')
   },
 
-  generate(subject: string, aspects: string[]) {
+  generate(
+    subject: string,
+    aspects: string[],
+    grounding?: {
+      category?: string
+      tag?: string
+      keyword?: string
+      time_window_hours?: number
+      include_web?: boolean
+      include_web_search?: boolean
+    },
+  ) {
     return request<MindMapOut>('/mindmap/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subject, aspects }),
+      body: JSON.stringify({ subject, aspects, ...grounding }),
     })
   },
 
