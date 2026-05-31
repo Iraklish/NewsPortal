@@ -69,6 +69,7 @@ export default function SettingsPage() {
         summary_system_prompt: s.summary_system_prompt_customized ? s.summary_system_prompt : '',
         fetch_interval_minutes: s.fetch_interval_minutes,
         auto_tag_interval_minutes: s.auto_tag_interval_minutes,
+        entertainment_keywords: s.entertainment_keywords_customized ? s.entertainment_keywords : '',
       })
     }).catch((e: unknown) => {
       setLoadError(e instanceof Error ? e.message : 'Could not reach backend')
@@ -602,6 +603,23 @@ export default function SettingsPage() {
                 Changes take effect immediately — no server restart required. Min 1 min, max 1440 min (24 h).
               </p>
             </div>
+
+            <div className="border-t border-[#1e2433] pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Tag size={13} className="text-indigo-400" />
+                <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Entertainment Filter</p>
+              </div>
+              <PromptField
+                label="Entertainment keywords"
+                hint="Comma-separated. The Entertainment category broadens to any article whose tag exactly matches one of these, or whose title contains one. Keep them distinctive — avoid short substrings that match unrelated words (e.g. 'band' → husband, 'actor' → factor)."
+                fieldKey="entertainment_keywords"
+                form={form}
+                set={set}
+                defaultValue={settings?.entertainment_keywords_default || ''}
+                customized={settings?.entertainment_keywords_customized || false}
+                onReset={() => resetKey('entertainment_keywords')}
+              />
+            </div>
           </div>
         </Card>
 
@@ -683,7 +701,7 @@ function PromptField({
 }: {
   label: string
   hint: string
-  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt' | 'summary_system_prompt'
+  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt' | 'summary_system_prompt' | 'entertainment_keywords'
   form: SettingsUpdate
   set: (k: keyof SettingsUpdate, v: string | boolean | number) => void
   defaultValue: string

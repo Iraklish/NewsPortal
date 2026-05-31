@@ -64,6 +64,24 @@ DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT = (
     "Respond with ONLY a single valid JSON object — no markdown, no surrounding prose."
 )
 
+# Entertainment broad-filter keywords (used to match entertainment content across
+# all categories by article tag or title). Curated to be precise: short ambiguous
+# substrings that produce false positives (e.g. "band"→husband, "actor"→factor,
+# "culture"→agriculture, "marvel"→marvelous) are deliberately excluded.
+DEFAULT_ENTERTAINMENT_KEYWORDS: list[str] = [
+    "hollywood", "celebrity", "celebrities", "box office", "red carpet",
+    "blockbuster", "grammy", "grammys", "oscar", "oscars", "emmy", "emmys",
+    "golden globe", "academy award", "movie premiere", "film festival",
+    "music album", "concert tour", "tv series", "tv show", "streaming series",
+    "music video", "netflix series", "movie", "film", "music video",
+]
+
+# Comma-joined string form, used as the editable default in Settings.
+DEFAULT_ENTERTAINMENT_KEYWORDS_STR = ", ".join(
+    dict.fromkeys(DEFAULT_ENTERTAINMENT_KEYWORDS)  # de-dupe, preserve order
+)
+
+
 DEFAULT_SUMMARY_SYSTEM_PROMPT = """\
 Summarize the following messages. Except weather, humor and advertisements, organize the summary \
 by breaking down all subjects and topics discussed. For each subject, list relevant topics and \

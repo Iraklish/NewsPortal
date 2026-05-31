@@ -13,6 +13,7 @@ from ..config import (
     DEFAULT_ASK_SYSTEM_PROMPT,
     DEFAULT_CHAT_SYSTEM_PROMPT,
     DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT,
+    DEFAULT_ENTERTAINMENT_KEYWORDS_STR,
     DEFAULT_SUMMARY_SYSTEM_PROMPT,
     settings,
 )
@@ -49,6 +50,7 @@ _NON_SECRET_KEYS = [
     "auto_analyze_enabled",
     "fetch_interval_minutes",
     "auto_tag_interval_minutes",
+    "entertainment_keywords",
 ]
 
 
@@ -124,6 +126,9 @@ def get_settings(db: Session = Depends(get_db)):
     else:
         auto_tag_interval = max(1, int(settings.auto_tag_interval_minutes))
 
+    ent_override = _db_get(db, "entertainment_keywords") or ""
+    ent_effective = ent_override if ent_override.strip() else DEFAULT_ENTERTAINMENT_KEYWORDS_STR
+
     return AppSettingsOut(
         **key_statuses,
         default_ai_provider=default_provider,
@@ -145,6 +150,9 @@ def get_settings(db: Session = Depends(get_db)):
         auto_analyze_enabled=auto_analyze,
         fetch_interval_minutes=fetch_interval,
         auto_tag_interval_minutes=auto_tag_interval,
+        entertainment_keywords=ent_effective,
+        entertainment_keywords_default=DEFAULT_ENTERTAINMENT_KEYWORDS_STR,
+        entertainment_keywords_customized=bool(ent_override.strip()),
     )
 
 
@@ -274,6 +282,7 @@ _RESETTABLE_KEYS = {
     "chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt",
     "summary_system_prompt",
     "custom_ai_endpoint", "custom_ai_model",
+    "entertainment_keywords",
 }
 
 
@@ -295,7 +304,10 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
     updated_keys = []
     update_dict = body.model_dump(exclude_none=True)
 
-    _no_strip = {"chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt", "summary_system_prompt"}
+    _no_strip = {
+        "chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt",
+        "summary_system_prompt", "entertainment_keywords",
+    }
     _bool_keys = {"auto_analyze_enabled"}
     _int_keys = {"fetch_interval_minutes", "auto_tag_interval_minutes"}
 

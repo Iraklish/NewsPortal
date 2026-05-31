@@ -207,6 +207,9 @@ export interface AppSettingsOut {
   auto_analyze_enabled: boolean
   fetch_interval_minutes: number
   auto_tag_interval_minutes: number
+  entertainment_keywords: string
+  entertainment_keywords_default: string
+  entertainment_keywords_customized: boolean
 }
 
 export interface SettingsUpdate {
@@ -236,6 +239,7 @@ export interface SettingsUpdate {
   auto_analyze_enabled?: boolean
   fetch_interval_minutes?: number
   auto_tag_interval_minutes?: number
+  entertainment_keywords?: string
 }
 
 export interface SummaryRequest {

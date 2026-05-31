@@ -14,8 +14,9 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
+from ..config import DEFAULT_ENTERTAINMENT_KEYWORDS
 from ..database import get_db
-from ..models import Article
+from ..models import AppSettings, Article
 from ..schemas import ArticleOut
 from ..services.scheduler import run_fetch_now
 from ..services.search_service import fetch_url
@@ -27,38 +28,38 @@ logger = logging.getLogger(__name__)
 # ── Entertainment broad-filter ────────────────────────────────────────────────
 # When category="entertainment" is requested we apply an OR across:
 #   1. category = 'entertainment'  (articles fetched from dedicated feeds)
-#   2. Any AI-extracted tag that is in the entertainment taxonomy
+#   2. Any AI-extracted tag that exactly matches an entertainment keyword
 #   3. Title contains an entertainment keyword
+#
+# The keyword list is configurable from Settings (key "entertainment_keywords",
+# comma-separated). It falls back to the curated default in config.py.
 
-_ENT_TAGS: list[str] = [
-    "entertainment", "movies", "film", "cinema", "music", "celebrity", "celebrities",
-    "television", "tv show", "tv series", "streaming", "concert", "album", "box office",
-    "oscar", "oscars", "grammy", "grammys", "emmy", "emmys", "golden globe",
-    "hollywood", "broadway", "pop culture", "culture", "gaming", "video games",
-    "fashion", "awards", "red carpet", "netflix", "disney", "marvel", "spotify",
-    "actor", "actress", "singer", "director", "rapper", "musician", "band",
-    "theater", "theatre", "pop music", "hip hop", "rock music", "comedy",
-]
-_ENT_TAGS_JSON = json.dumps(_ENT_TAGS)   # passed as bound param — SQL-safe
-
-_ENT_KEYWORDS: list[str] = [
-    "movie", "film", "music", "celebrity", "actor", "actress", "singer",
-    "concert", "album", "oscar", "grammy", "emmy", "golden globe",
-    "hollywood", "netflix", "disney", "marvel", "hbo", "hulu", "amazon prime",
-    "box office", "premiere", "streaming", "spotify", "trailer",
-    "season finale", "music video", "chart-topping", "grammy-winning",
-    "oscar-winning", "emmy-winning",
-]
+def _get_entertainment_keywords(db: Session) -> list[str]:
+    """Read the configurable entertainment keyword list (DB override → config default)."""
+    row = (
+        db.query(AppSettings.value)
+        .filter(AppSettings.key == "entertainment_keywords")
+        .first()
+    )
+    raw = (row[0] if row else "") or ""
+    kws = [k.strip().lower() for k in raw.split(",") if k.strip()]
+    if not kws:
+        kws = [k.strip().lower() for k in DEFAULT_ENTERTAINMENT_KEYWORDS]
+    # de-dupe while preserving order
+    return list(dict.fromkeys(kws))
 
 
-def _apply_entertainment_filter(query, model):
+def _apply_entertainment_filter(query, model, db: Session):
     """Broaden a query to match entertainment content across all categories.
 
     Matches articles that:
       • are in the 'entertainment' category, OR
-      • have any entertainment-related AI tag, OR
-      • have entertainment keywords in the title.
+      • carry an AI tag that exactly matches a configured keyword, OR
+      • have a configured keyword in the title.
     """
+    keywords = _get_entertainment_keywords(db)
+    kw_json = json.dumps(keywords)   # passed as bound param — SQL-safe
+
     tag_exists = text(
         "EXISTS ("
         "  SELECT 1 FROM json_each(articles.tags) t"
@@ -66,9 +67,9 @@ def _apply_entertainment_filter(query, model):
         "    SELECT lower(value) FROM json_each(:ent_tags)"
         "  )"
         ")"
-    ).bindparams(ent_tags=_ENT_TAGS_JSON)
+    ).bindparams(ent_tags=kw_json)
 
-    title_conditions = [model.title.ilike(f"%{kw}%") for kw in _ENT_KEYWORDS]
+    title_conditions = [model.title.ilike(f"%{kw}%") for kw in keywords]
 
     return query.filter(or_(
         model.category == "entertainment",
@@ -168,7 +169,7 @@ def count_articles(
     query = db.query(Article.id)
     if category == "entertainment":
         # Broad OR: category + entertainment tags + title keywords
-        query = _apply_entertainment_filter(query, Article)
+        query = _apply_entertainment_filter(query, Article, db)
     elif category:
         query = query.filter(Article.category == category)
     query = _apply_time_window(query, Article, hours)
@@ -209,7 +210,7 @@ def list_articles(
     query = db.query(Article)
     if category == "entertainment":
         # Broad OR: category + entertainment tags + title keywords
-        query = _apply_entertainment_filter(query, Article)
+        query = _apply_entertainment_filter(query, Article, db)
     elif category:
         query = query.filter(Article.category == category)
     query = _apply_time_window(query, Article, hours)

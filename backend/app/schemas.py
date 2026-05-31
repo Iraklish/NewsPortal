@@ -141,6 +141,7 @@ class SettingsUpdate(BaseModel):
     auto_analyze_enabled: Optional[bool] = None
     fetch_interval_minutes: Optional[int] = None
     auto_tag_interval_minutes: Optional[int] = None
+    entertainment_keywords: Optional[str] = None
 
 
 class KeyStatus(BaseModel):
@@ -183,6 +184,9 @@ class AppSettingsOut(BaseModel):
     auto_analyze_enabled: bool
     fetch_interval_minutes: int
     auto_tag_interval_minutes: int
+    entertainment_keywords: str
+    entertainment_keywords_default: str
+    entertainment_keywords_customized: bool
 
 
 # ── MindMap ───────────────────────────────────────────────────────────────────
