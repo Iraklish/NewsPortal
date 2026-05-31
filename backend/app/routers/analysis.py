@@ -24,6 +24,7 @@ from ..schemas import (
 from ..services.analyzer import analyze_article, run_directed_analysis
 from ..services.ai_client import call_ai, call_ai_grounded
 from ..services.directed_report import count_db_articles, run_directed_report
+from ..services.search_service import multi_engine_search
 
 
 def _get_prompt(db: Session, key: str, default: str) -> str:
@@ -533,6 +534,116 @@ async def ask_about_article(
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
 
     return {"response": response_text}
+
+
+def _build_factcheck_web_block(web_results: list[dict]) -> tuple[str, list[dict]]:
+    """Format explicit web search results into a context block + reference list."""
+    if not web_results:
+        return "", []
+    refs: list[dict] = []
+    blocks = ["=== LIVE WEB SEARCH RESULTS ==="]
+    for i, r in enumerate(web_results, 1):
+        blocks.append(
+            f"[WEB-{i}] {r.get('title') or '(no title)'}\n"
+            f"    Source: {r.get('source') or 'web'} | Published: {r.get('published_at') or 'unknown'}\n"
+            f"    URL: {r.get('url')}\n"
+            f"    Snippet: {r.get('snippet') or ''}"
+        )
+        refs.append({
+            "kind": "web",
+            "title": r.get("title"),
+            "url": r.get("url"),
+            "source": r.get("source"),
+            "snippet": r.get("snippet"),
+        })
+    return "\n".join(blocks), refs
+
+
+@router.post("/article/{article_id}/factcheck")
+async def factcheck_article(
+    article_id: int,
+    db: Session = Depends(get_db),
+):
+    """Fact-check an article's main claims against live web sources.
+
+    Combines an explicit multi-engine web search with the AI provider's native
+    web grounding, then returns a structured markdown verdict per claim.
+    """
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    content = (article.content or article.summary or "")[:6000]
+
+    # Explicit multi-engine web search seeded from the article's headline.
+    search_query = (article.title or article.summary or "").strip()[:200]
+    web_block, web_refs = "", []
+    if search_query:
+        try:
+            web_results = await multi_engine_search(search_query, db=db, num=8)
+            web_block, web_refs = _build_factcheck_web_block(web_results)
+            logger.info("[factcheck] explicit web search returned %d result(s)", len(web_results))
+        except Exception as exc:
+            logger.warning("[factcheck] explicit web search failed: %s", exc)
+
+    system = (
+        "You are a rigorous fact-checker. Verify the factual claims made in the ARTICLE below "
+        "against independent, reliable sources. Use your built-in web search AND the LIVE WEB "
+        "SEARCH RESULTS provided to corroborate or refute each claim.\n\n"
+        "ARTICLE\n"
+        f"Title: {article.title or '(no title)'}\n"
+        f"Source: {article.source or 'unknown'}\n"
+        f"Published: {article.published_at or 'unknown'}\n"
+        f"URL: {article.url}\n\n"
+        f"{content}\n\n"
+        f"{web_block}\n\n"
+        "INSTRUCTIONS:\n"
+        "- Identify the 3-6 most important, checkable factual claims (figures, events, attributions, dates).\n"
+        "- For EACH claim, give a verdict on its own line in this exact markdown format:\n"
+        "  **<Verdict>** — <the claim in your own words>. <One-sentence justification with the source.>\n"
+        "  where <Verdict> is one of: ✅ Supported, ⚠️ Disputed, ❌ False, ❔ Unverified.\n"
+        "- Prefer independent sources; note when the only corroboration is the article's own outlet.\n"
+        "- Cite supporting sources inline by URL or [WEB-N] tag.\n"
+        "- End with a one-line **Overall:** assessment of the article's reliability.\n"
+        "- Be concrete and skeptical. Do not invent corroboration that the sources don't provide."
+    )
+    user_prompt = "Fact-check the article above and report your findings."
+
+    try:
+        grounded = await call_ai_grounded(system=system, user=user_prompt, max_tokens=2000, db=db)
+    except Exception as exc:
+        logger.error("Fact-check AI call failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+
+    text = grounded.text
+    if not grounded.provider_used_grounding and not web_refs:
+        text = (
+            "_(Your current AI provider doesn't support web grounding and no web results were "
+            "available, so this check relies on the model's prior knowledge. Switch to Gemini or "
+            "Anthropic in Settings, or configure a search API key, for live verification.)_\n\n"
+            + text
+        )
+
+    # Append a compact source list from AI citations + explicit web results.
+    cite_lines: list[str] = []
+    seen_urls: set[str] = set()
+    for c in (grounded.citations or []):
+        if c.url and c.url not in seen_urls:
+            seen_urls.add(c.url)
+            cite_lines.append(f"- [{c.title or c.url}]({c.url})")
+    for r in web_refs:
+        url = r.get("url")
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            cite_lines.append(f"- [{r.get('title') or url}]({url})")
+    if cite_lines:
+        text += "\n\n**Sources checked:**\n" + "\n".join(cite_lines[:12])
+
+    return {
+        "response": text,
+        "references": web_refs,
+        "used_web": bool(grounded.provider_used_grounding or web_refs),
+    }
 
 
 _NEED_WEB_MARKER = "[NEED_WEB]"

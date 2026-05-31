@@ -15,7 +15,7 @@ import SummaryMarkdown from '@/components/SummaryMarkdown'
 import {
   RefreshCw, Search, X, ExternalLink, Loader2, Sparkles,
   Send, ChevronDown, ChevronLeft, ChevronRight, Clock, Plus, BookOpen, Globe, Maximize2, Minimize2,
-  CheckSquare, Square, Tag, LayoutGrid, Rows3, Trash2, ScrollText,
+  CheckSquare, Square, Tag, LayoutGrid, Rows3, Trash2, ScrollText, ShieldCheck,
 } from 'lucide-react'
 import clsx from 'clsx'
 import AddArticleModal from '@/components/AddArticleModal'
@@ -1021,6 +1021,7 @@ type TimelineItem =
   | { kind: 'pending-chat'; id: string; at: number }
   | { kind: 'pending-analyze'; id: string; at: number; focus?: string }
   | { kind: 'pending-summarize'; id: string; at: number }
+  | { kind: 'pending-factcheck'; id: string; at: number }
 
 function ArticleDetail({ article, onClose }: { article: Article; onClose: () => void }) {
   // Unified timeline of user prompts, AI chat replies, and persisted analyses,
@@ -1061,14 +1062,15 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
       .map(it => ({ role: it.kind === 'user' ? 'user' : 'assistant', content: (it as { content: string }).content }))
   }
 
-  async function send(mode: 'ask' | 'analyze' | 'summarize') {
+  async function send(mode: 'ask' | 'analyze' | 'summarize' | 'factcheck') {
     const langSuffix = LANG_INSTRUCTION[language]
     const SUMMARIZE_PROMPT =
       'Please provide a concise summary of this article. Cover: the main topic, key facts or figures, who is involved, why it matters, and any immediate implications.' + langSuffix
     const rawText = mode === 'summarize' ? SUMMARIZE_PROMPT : input.trim()
     // For ask/analyze, append language instruction to the effective prompt but keep the display label clean
     const text = (mode !== 'summarize' && langSuffix) ? rawText + langSuffix : rawText
-    if (!text || busy) return
+    if (mode !== 'factcheck' && (!text || busy)) return
+    if (busy) return
     setBusy(true)
     setError('')
     const now = Date.now()
@@ -1076,6 +1078,8 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
 
     if (mode === 'summarize') {
       setTimeline(prev => [...prev, { kind: 'pending-summarize', id: pendingId, at: now }])
+    } else if (mode === 'factcheck') {
+      setTimeline(prev => [...prev, { kind: 'pending-factcheck', id: pendingId, at: now }])
     } else {
       const userItem: TimelineItem = { kind: 'user', id: `u-${now}`, at: now, content: rawText }
       const pending: TimelineItem = mode === 'ask'
@@ -1086,7 +1090,13 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
     }
 
     try {
-      if (mode === 'ask' || mode === 'summarize') {
+      if (mode === 'factcheck') {
+        const res = await analysisApi.factCheckArticle(article.id)
+        setTimeline(prev => prev
+          .filter(it => it.id !== pendingId)
+          .concat({ kind: 'assistant', id: `m-${Date.now()}`, at: Date.now(), content: res.response })
+        )
+      } else if (mode === 'ask' || mode === 'summarize') {
         const history = mode === 'ask' ? chatHistory() : []
         const res = await analysisApi.askAboutArticle(article.id, text, history)
         setTimeline(prev => prev
@@ -1226,6 +1236,14 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
                   </div>
                 )
               }
+              if (it.kind === 'pending-factcheck') {
+                return (
+                  <div key={it.id} className="bg-[#0a0f1e] rounded-lg px-3 py-2 text-sm text-slate-400 flex items-center gap-2 border border-sky-500/30">
+                    <Loader2 size={12} className="animate-spin text-sky-400" />
+                    Fact-checking against live web sources…
+                  </div>
+                )
+              }
               return (
                 <div key={it.id} className="bg-[#0a0f1e] rounded-lg px-3 py-2 text-sm text-slate-400 flex items-center gap-2 border border-indigo-500/30">
                   <Loader2 size={12} className="animate-spin text-indigo-400" />
@@ -1250,6 +1268,15 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <BookOpen size={14} />}
               Summarize
+            </button>
+            <button
+              onClick={() => send('factcheck')}
+              disabled={busy}
+              title="Fact-check this article's claims against live web sources"
+              className="flex items-center gap-1.5 px-4 py-2 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 rounded-lg text-sm text-white font-semibold transition-colors"
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+              Fact Check
             </button>
             <div className="flex-1" />
             <Globe size={13} className="text-slate-500 flex-shrink-0" />
@@ -1314,6 +1341,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
 
           <p className="text-[10px] text-slate-600">
             <span className="text-emerald-400">Summarize</span> = one-click summary ·{' '}
+            <span className="text-sky-400">Fact Check</span> = verify claims via web ·{' '}
             <span className="text-amber-400">Ask</span> = chat answer ·{' '}
             <span className="text-indigo-400">Analyze</span> = saved structured report ·{' '}
             Enter = Ask · ⌘/Ctrl+Enter = Analyze

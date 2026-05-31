@@ -507,6 +507,13 @@ export const analysisApi = {
     })
   },
 
+  factCheckArticle(articleId: number) {
+    return request<{ response: string; references: unknown[]; used_web: boolean }>(
+      `/analysis/article/${articleId}/factcheck`,
+      { method: 'POST' },
+    )
+  },
+
   listForArticle(articleId: number) {
     return request<Analysis[]>(`/analysis?article_id=${articleId}`)
   },
