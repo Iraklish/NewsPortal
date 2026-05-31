@@ -204,6 +204,9 @@ export interface AppSettingsOut {
   ask_system_prompt_customized: boolean
   directed_report_system_prompt_customized: boolean
   summary_system_prompt_customized: boolean
+  article_summarize_prompt: string
+  article_summarize_prompt_default: string
+  article_summarize_prompt_customized: boolean
   auto_analyze_enabled: boolean
   fetch_interval_minutes: number
   auto_tag_interval_minutes: number
@@ -236,6 +239,7 @@ export interface SettingsUpdate {
   ask_system_prompt?: string
   directed_report_system_prompt?: string
   summary_system_prompt?: string
+  article_summarize_prompt?: string
   auto_analyze_enabled?: boolean
   fetch_interval_minutes?: number
   auto_tag_interval_minutes?: number

@@ -82,6 +82,15 @@ DEFAULT_ENTERTAINMENT_KEYWORDS_STR = ", ".join(
 )
 
 
+# The user-message prompt sent by the per-article "Summarize" button on the
+# News page. Editable in Settings (key "article_summarize_prompt"); a language
+# instruction is appended automatically when a non-English language is chosen.
+DEFAULT_ARTICLE_SUMMARIZE_PROMPT = (
+    "Please provide a concise summary of this article. Cover: the main topic, "
+    "key facts or figures, who is involved, why it matters, and any immediate implications."
+)
+
+
 # Quick-pick tickers shown as chips on the Stock Reviews page. User-editable
 # (persisted in AppSettings under "quick_tickers"); this is the seed default.
 DEFAULT_QUICK_TICKERS: list[str] = [

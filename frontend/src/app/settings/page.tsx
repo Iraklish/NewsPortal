@@ -67,6 +67,7 @@ export default function SettingsPage() {
         ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '',
         directed_report_system_prompt: s.directed_report_system_prompt_customized ? s.directed_report_system_prompt : '',
         summary_system_prompt: s.summary_system_prompt_customized ? s.summary_system_prompt : '',
+        article_summarize_prompt: s.article_summarize_prompt_customized ? s.article_summarize_prompt : '',
         fetch_interval_minutes: s.fetch_interval_minutes,
         auto_tag_interval_minutes: s.auto_tag_interval_minutes,
         entertainment_keywords: s.entertainment_keywords_customized ? s.entertainment_keywords : '',
@@ -374,6 +375,16 @@ export default function SettingsPage() {
                 defaultValue={settings?.summary_system_prompt_default || ''}
                 customized={settings?.summary_system_prompt_customized || false}
                 onReset={() => resetKey('summary_system_prompt')}
+              />
+              <PromptField
+                label="Article Summarize button"
+                hint="The instruction sent when you click the green Summarize button on an article in the News page. A language instruction is appended automatically when a non-English language is selected."
+                fieldKey="article_summarize_prompt"
+                form={form}
+                set={set}
+                defaultValue={settings?.article_summarize_prompt_default || ''}
+                customized={settings?.article_summarize_prompt_customized || false}
+                onReset={() => resetKey('article_summarize_prompt')}
               />
             </div>
           </Card>
@@ -711,7 +722,7 @@ function PromptField({
 }: {
   label: string
   hint: string
-  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt' | 'summary_system_prompt' | 'entertainment_keywords'
+  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt' | 'summary_system_prompt' | 'article_summarize_prompt' | 'entertainment_keywords'
   form: SettingsUpdate
   set: (k: keyof SettingsUpdate, v: string | boolean | number) => void
   defaultValue: string

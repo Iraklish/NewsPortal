@@ -138,6 +138,7 @@ class SettingsUpdate(BaseModel):
     ask_system_prompt: Optional[str] = None
     directed_report_system_prompt: Optional[str] = None
     summary_system_prompt: Optional[str] = None
+    article_summarize_prompt: Optional[str] = None
     auto_analyze_enabled: Optional[bool] = None
     fetch_interval_minutes: Optional[int] = None
     auto_tag_interval_minutes: Optional[int] = None
@@ -181,6 +182,9 @@ class AppSettingsOut(BaseModel):
     ask_system_prompt_customized: bool
     directed_report_system_prompt_customized: bool
     summary_system_prompt_customized: bool
+    article_summarize_prompt: str
+    article_summarize_prompt_default: str
+    article_summarize_prompt_customized: bool
     auto_analyze_enabled: bool
     fetch_interval_minutes: int
     auto_tag_interval_minutes: int

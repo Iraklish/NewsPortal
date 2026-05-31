@@ -5,6 +5,7 @@ import {
   articlesApi,
   analysisApi,
   sourcesApi,
+  settingsApi,
   type Article,
   type Analysis,
   type SummaryResponse,
@@ -1032,7 +1033,17 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
   const [error, setError] = useState('')
   const [language, setLanguage] = useState<Lang>('English')
   const [maximized, setMaximized] = useState(false)
+  const [summarizePrompt, setSummarizePrompt] = useState(
+    'Please provide a concise summary of this article. Cover: the main topic, key facts or figures, who is involved, why it matters, and any immediate implications.',
+  )
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // Load the (possibly customized) Summarize-button prompt from settings.
+  useEffect(() => {
+    settingsApi.get()
+      .then(s => { if (s.article_summarize_prompt) setSummarizePrompt(s.article_summarize_prompt) })
+      .catch(() => {})
+  }, [])
 
   // Load existing analyses for this article into the timeline.
   useEffect(() => {
@@ -1064,8 +1075,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
 
   async function send(mode: 'ask' | 'analyze' | 'summarize' | 'factcheck') {
     const langSuffix = LANG_INSTRUCTION[language]
-    const SUMMARIZE_PROMPT =
-      'Please provide a concise summary of this article. Cover: the main topic, key facts or figures, who is involved, why it matters, and any immediate implications.' + langSuffix
+    const SUMMARIZE_PROMPT = summarizePrompt + langSuffix
     const rawText = mode === 'summarize' ? SUMMARIZE_PROMPT : input.trim()
     // For ask/analyze, append language instruction to the effective prompt but keep the display label clean
     const text = (mode !== 'summarize' && langSuffix) ? rawText + langSuffix : rawText
