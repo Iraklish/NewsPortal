@@ -82,6 +82,14 @@ DEFAULT_ENTERTAINMENT_KEYWORDS_STR = ", ".join(
 )
 
 
+# Quick-pick tickers shown as chips on the Stock Reviews page. User-editable
+# (persisted in AppSettings under "quick_tickers"); this is the seed default.
+DEFAULT_QUICK_TICKERS: list[str] = [
+    "AAPL", "TSLA", "NVDA", "SPY", "BTC-USD", "MSFT",
+    "AMZN", "ILS=X", "WIX", "VST", "MSTU", "TWLO",
+]
+
+
 DEFAULT_SUMMARY_SYSTEM_PROMPT = """\
 Summarize the following messages. Except weather, humor and advertisements, organize the summary \
 by breaking down all subjects and topics discussed. For each subject, list relevant topics and \

@@ -1,11 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { stocksApi, type StockAnalysis } from '@/lib/api'
+import { stocksApi, settingsApi, type StockAnalysis } from '@/lib/api'
 import StockCard from '@/components/StockCard'
-import { Search, Loader2, TrendingUp } from 'lucide-react'
-
-const QUICK_TICKERS = ['AAPL', 'TSLA', 'NVDA', 'SPY', 'BTC-USD', 'MSFT', 'AMZN', 'ILS=X', 'WIX', 'VST', 'MSTU', 'TWLO']
+import { Search, Loader2, TrendingUp, Plus, X } from 'lucide-react'
 
 export default function StocksPage() {
   const [query, setQuery] = useState('')
@@ -15,12 +13,38 @@ export default function StocksPage() {
   const [recentAnalyses, setRecentAnalyses] = useState<StockAnalysis[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [quickTickers, setQuickTickers] = useState<string[]>([])
+  const [newTicker, setNewTicker] = useState('')
+  const [editTickers, setEditTickers] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     stocksApi.getAnalyses().then(setRecentAnalyses).catch(() => {})
+    settingsApi.getQuickTickers().then(r => setQuickTickers(r.tickers)).catch(() => {})
   }, [])
+
+  async function persistTickers(next: string[]) {
+    setQuickTickers(next)
+    try {
+      const r = await settingsApi.setQuickTickers(next)
+      setQuickTickers(r.tickers)
+    } catch {
+      // reload authoritative list on failure
+      settingsApi.getQuickTickers().then(r => setQuickTickers(r.tickers)).catch(() => {})
+    }
+  }
+
+  function addTicker() {
+    const t = newTicker.trim().toUpperCase()
+    if (!t || quickTickers.includes(t)) { setNewTicker(''); return }
+    persistTickers([...quickTickers, t])
+    setNewTicker('')
+  }
+
+  function removeTicker(t: string) {
+    persistTickers(quickTickers.filter(x => x !== t))
+  }
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -104,16 +128,57 @@ export default function StocksPage() {
       </div>
 
       {/* Quick tickers */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        {QUICK_TICKERS.map(t => (
-          <button
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        {quickTickers.map(t => (
+          <div
             key={t}
-            onClick={() => { setQuery(t); analyze(t) }}
-            className="px-3 py-1.5 bg-[#0d1117] border border-[#1e2433] rounded-lg text-sm font-mono text-slate-400 hover:text-white hover:border-indigo-500/50 transition-colors"
+            className="group flex items-center bg-[#0d1117] border border-[#1e2433] rounded-lg hover:border-indigo-500/50 transition-colors"
           >
-            {t}
-          </button>
+            <button
+              onClick={() => { setQuery(t); analyze(t) }}
+              className="pl-3 pr-2 py-1.5 text-sm font-mono text-slate-400 group-hover:text-white transition-colors"
+            >
+              {t}
+            </button>
+            {editTickers && (
+              <button
+                onClick={() => removeTicker(t)}
+                title={`Remove ${t}`}
+                className="pr-2 pl-0.5 py-1.5 text-slate-600 hover:text-red-400 transition-colors"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
         ))}
+
+        {editTickers ? (
+          <div className="flex items-center bg-[#0d1117] border border-indigo-500/40 rounded-lg">
+            <input
+              value={newTicker}
+              onChange={e => setNewTicker(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') addTicker(); if (e.key === 'Escape') setEditTickers(false) }}
+              placeholder="Add ticker…"
+              autoFocus
+              className="w-28 bg-transparent pl-3 pr-1 py-1.5 text-sm font-mono text-white placeholder-slate-600 focus:outline-none uppercase"
+            />
+            <button
+              onClick={addTicker}
+              disabled={!newTicker.trim()}
+              className="px-2 py-1.5 text-indigo-400 hover:text-indigo-300 disabled:opacity-40 transition-colors"
+              title="Add"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+        ) : null}
+
+        <button
+          onClick={() => setEditTickers(v => !v)}
+          className="px-2.5 py-1.5 text-xs text-slate-500 hover:text-white border border-dashed border-[#1e2433] hover:border-indigo-500/50 rounded-lg transition-colors"
+        >
+          {editTickers ? 'Done' : 'Edit'}
+        </button>
       </div>
 
       {error && (

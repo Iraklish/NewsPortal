@@ -398,6 +398,11 @@ export default function SettingsPage() {
             </div>
           </Card>
 
+          {/* Stock Reviews quick tickers */}
+          <Card title="Stock Reviews — Quick Tickers">
+            <QuickTickersManager showToast={showToast} />
+          </Card>
+
           {/* Web Search APIs */}
           <Card title="Web Search APIs">
             <p className="text-xs text-slate-500 mb-3">
@@ -747,6 +752,92 @@ function PromptField({
       <p className="text-[10px] text-slate-600 mt-1">
         {value ? `${value.length} chars (override active)` : 'Empty — using built-in default (shown as placeholder)'}
       </p>
+    </div>
+  )
+}
+
+function QuickTickersManager({ showToast }: { showToast: (msg: string, type: 'success' | 'error') => void }) {
+  const [tickers, setTickers] = useState<string[]>([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    settingsApi.getQuickTickers()
+      .then(r => setTickers(r.tickers))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  async function persist(next: string[]) {
+    const prev = tickers
+    setTickers(next)
+    setSaving(true)
+    try {
+      const r = await settingsApi.setQuickTickers(next)
+      setTickers(r.tickers)
+    } catch (e: unknown) {
+      setTickers(prev)
+      showToast(e instanceof Error ? e.message : 'Save failed', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function add() {
+    const t = input.trim().toUpperCase()
+    if (!t || tickers.includes(t)) { setInput(''); return }
+    persist([...tickers, t])
+    setInput('')
+  }
+
+  return (
+    <div>
+      <p className="text-xs text-slate-500 mb-3">
+        Quick-pick chips shown on the Stock Reviews page. Click ✕ to remove; add tickers below
+        (e.g. AAPL, BTC-USD, ILS=X). Changes apply immediately.
+      </p>
+      {loading ? (
+        <Loader2 size={14} className="animate-spin text-slate-500" />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            {tickers.map(t => (
+              <span
+                key={t}
+                className="flex items-center gap-1 bg-[#0a0f1e] border border-[#1e2433] rounded-lg pl-2.5 pr-1.5 py-1 text-xs font-mono text-slate-300"
+              >
+                {t}
+                <button
+                  onClick={() => persist(tickers.filter(x => x !== t))}
+                  disabled={saving}
+                  title={`Remove ${t}`}
+                  className="text-slate-600 hover:text-red-400 disabled:opacity-40 transition-colors"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+            {tickers.length === 0 && <span className="text-xs text-slate-600 italic">No quick tickers — add one below.</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
+              placeholder="Add ticker…"
+              className="w-40 bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-1.5 text-xs font-mono text-white placeholder-slate-600 uppercase focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+            <button
+              onClick={add}
+              disabled={saving || !input.trim()}
+              className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 rounded-lg text-xs font-medium disabled:opacity-40 transition-colors"
+            >
+              {saving ? <Loader2 size={11} className="animate-spin" /> : <Plus size={12} />} Add
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

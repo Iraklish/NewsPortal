@@ -14,6 +14,7 @@ from ..config import (
     DEFAULT_CHAT_SYSTEM_PROMPT,
     DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT,
     DEFAULT_ENTERTAINMENT_KEYWORDS_STR,
+    DEFAULT_QUICK_TICKERS,
     DEFAULT_SUMMARY_SYSTEM_PROMPT,
     settings,
 )
@@ -276,6 +277,44 @@ def set_auto_tag_categories(body: AutoTagCategoriesIn, db: Session = Depends(get
     _set_db(db, "auto_tag_categories", json.dumps(body.categories))
     db.commit()
     return {"categories": body.categories}
+
+
+class QuickTickersIn(BaseModel):
+    tickers: List[str]
+
+
+def _normalize_tickers(tickers: List[str]) -> List[str]:
+    """Trim, upper-case, drop blanks, de-dupe (preserve order), cap at 50."""
+    cleaned: List[str] = []
+    seen: set[str] = set()
+    for t in tickers:
+        tt = (t or "").strip().upper()
+        if tt and tt not in seen:
+            seen.add(tt)
+            cleaned.append(tt)
+    return cleaned[:50]
+
+
+@router.get("/quick-tickers")
+def get_quick_tickers(db: Session = Depends(get_db)):
+    """Return the quick-pick tickers shown as chips on the Stock Reviews page."""
+    raw = _db_get(db, "quick_tickers")
+    if not raw:
+        return {"tickers": DEFAULT_QUICK_TICKERS}
+    try:
+        tickers = json.loads(raw)
+        return {"tickers": tickers if isinstance(tickers, list) else DEFAULT_QUICK_TICKERS}
+    except Exception:
+        return {"tickers": DEFAULT_QUICK_TICKERS}
+
+
+@router.put("/quick-tickers")
+def set_quick_tickers(body: QuickTickersIn, db: Session = Depends(get_db)):
+    """Save the user's quick-pick ticker list for the Stock Reviews page."""
+    cleaned = _normalize_tickers(body.tickers)
+    _set_db(db, "quick_tickers", json.dumps(cleaned))
+    db.commit()
+    return {"tickers": cleaned}
 
 
 _RESETTABLE_KEYS = {

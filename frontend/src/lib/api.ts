@@ -612,6 +612,18 @@ export const settingsApi = {
     return request<{ categories: string[] }>('/settings/auto-tag-categories')
   },
 
+  getQuickTickers() {
+    return request<{ tickers: string[] }>('/settings/quick-tickers')
+  },
+
+  setQuickTickers(tickers: string[]) {
+    return request<{ tickers: string[] }>('/settings/quick-tickers', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tickers }),
+    })
+  },
+
   setAutoTagCategories(categories: string[]) {
     return request<{ categories: string[] }>('/settings/auto-tag-categories', {
       method: 'PUT',
