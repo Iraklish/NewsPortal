@@ -450,7 +450,7 @@ export const articlesApi = {
   bulkAutoTag(limit = 50, categories?: string[]) {
     const params = new URLSearchParams({ limit: String(limit) })
     if (categories && categories.length > 0) params.set('categories', categories.join(','))
-    return request<{ tagged: number; errors: number; total: number }>(
+    return request<{ tagged: number; skipped?: number; errors: number; total: number; error_detail?: string }>(
       `/articles/bulk-auto-tag?${params}`,
       { method: 'POST' },
     )

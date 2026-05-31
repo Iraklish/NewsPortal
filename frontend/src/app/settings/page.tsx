@@ -503,8 +503,13 @@ export default function SettingsPage() {
                       setSavingAutoTag(true)
                       try {
                         const r = await articlesApi.bulkAutoTag(500, autoTagCategories)
-                        const toastType = r.tagged === 0 && r.errors > 0 ? 'error' : 'success'
-                        showToast(`Tagged ${r.tagged} article${r.tagged === 1 ? '' : 's'} (${r.total} untagged found${r.errors ? `, ${r.errors} errors` : ''})`, toastType)
+                        const toastType = r.errors > 0 ? 'error' : 'success'
+                        const parts = [`${r.total} found`]
+                        if (r.skipped) parts.push(`${r.skipped} no tags`)
+                        if (r.errors) parts.push(`${r.errors} errors`)
+                        let msg = `Tagged ${r.tagged} article${r.tagged === 1 ? '' : 's'} (${parts.join(', ')})`
+                        if (r.errors && r.error_detail) msg += ` — ${r.error_detail}`
+                        showToast(msg, toastType)
                       } catch (e: unknown) {
                         showToast(e instanceof Error ? e.message : 'Tagging failed', 'error')
                       } finally {

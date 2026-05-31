@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 async def ai_extract_tags(article: Article, db) -> list[str]:
     """Call AI to extract at least 10 English topic tags regardless of article language.
 
-    Returns an empty list on any error so callers can safely ignore failures.
+    Returns an empty list when the model genuinely produces no parseable tags.
+    Raises on a hard failure (e.g. AI provider/API error) so callers can tell a
+    real error apart from an empty result and surface a meaningful message.
     """
     from .ai_client import call_ai
 
@@ -38,23 +40,32 @@ async def ai_extract_tags(article: Article, db) -> list[str]:
         "Return at least 10 English topic tags as a JSON array:"
     )
 
+    # Let provider/API errors propagate — they are real failures the caller must
+    # report, not "no tags". Logged at WARNING so they land in app.log.
     try:
         raw = await call_ai(system=system, user=user, max_tokens=500, db=db)
+    except Exception as exc:
+        logger.warning("[tagger] AI call failed for article %s: %s", article.id, exc)
+        raise
+
+    # Parsing problems are soft: the call succeeded but the output wasn't usable.
+    try:
         cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
         s, e = cleaned.find("["), cleaned.rfind("]")
         if s == -1 or e == -1:
-            logger.debug("[tagger] could not find JSON array in response: %.80s", raw)
+            logger.warning("[tagger] no JSON array in response for article %s: %.120s", article.id, raw)
             return []
         tags = json.loads(cleaned[s: e + 1])
-        # Deduplicate (case-insensitive) while preserving order; cap at 20.
-        seen: set[str] = set()
-        result: list[str] = []
-        for t in tags:
-            t = str(t).strip()
-            if t and t.lower() not in seen:
-                seen.add(t.lower())
-                result.append(t)
-        return result[:20]
     except Exception as exc:
-        logger.debug("[tagger] tag extraction failed for article %d: %s", article.id, exc)
+        logger.warning("[tagger] could not parse tags for article %s: %s", article.id, exc)
         return []
+
+    # Deduplicate (case-insensitive) while preserving order; cap at 20.
+    seen: set[str] = set()
+    result: list[str] = []
+    for t in tags:
+        t = str(t).strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            result.append(t)
+    return result[:20]

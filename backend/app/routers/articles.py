@@ -57,6 +57,15 @@ def _apply_entertainment_filter(query, model, db: Session):
       • carry an AI tag that exactly matches a configured keyword, OR
       • have a configured keyword in the title.
     """
+    return query.filter(_entertainment_condition(db, model))
+
+
+def _entertainment_condition(db: Session, model):
+    """Build the broad-entertainment OR clause (category | tag | title keyword).
+
+    Shared by the News filter and the bulk auto-tagger so that "entertainment"
+    means the same thing in both places.
+    """
     keywords = _get_entertainment_keywords(db)
     kw_json = json.dumps(keywords)   # passed as bound param — SQL-safe
 
@@ -71,11 +80,11 @@ def _apply_entertainment_filter(query, model, db: Session):
 
     title_conditions = [model.title.ilike(f"%{kw}%") for kw in keywords]
 
-    return query.filter(or_(
+    return or_(
         model.category == "entertainment",
         tag_exists,
         *title_conditions,
-    ))
+    )
 
 
 def _apply_time_window(query, model, hours: int):
@@ -416,9 +425,20 @@ async def bulk_auto_tag(
     if categories:
         cat_list = [c.strip() for c in categories.split(",") if c.strip()]
         if cat_list:
-            query = query.filter(Article.category.in_(cat_list))
+            # "entertainment" is a virtual category in the UI: it spans all
+            # categories via tags/title keywords. Match the same broad filter the
+            # News page uses, so the count of taggable items is consistent.
+            other_cats = [c for c in cat_list if c != "entertainment"]
+            conds = []
+            if other_cats:
+                conds.append(Article.category.in_(other_cats))
+            if "entertainment" in cat_list:
+                conds.append(_entertainment_condition(db, Article))
+            if conds:
+                query = query.filter(or_(*conds))
     articles = query.order_by(Article.fetched_at.desc()).limit(limit).all()
-    tagged = errors = 0
+    tagged = skipped = errors = 0
+    last_error = ""
     for art in articles:
         try:
             new_tags = await ai_extract_tags(art, db)
@@ -427,15 +447,27 @@ async def bulk_auto_tag(
                 db.commit()
                 tagged += 1
             else:
-                logger.debug("[bulk-tag] article %d: tagger returned no tags", art.id)
-                errors += 1
+                # Call succeeded but produced no usable tags — not a hard failure.
+                logger.info("[bulk-tag] article %d: model returned no tags", art.id)
+                skipped += 1
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.warning("[bulk-tag] article %d failed: %s", art.id, exc)
             db.rollback()
             errors += 1
-    return {"tagged": tagged, "errors": errors, "total": len(articles)}
+            last_error = str(exc)
+    logger.info(
+        "[bulk-tag] complete: %d tagged, %d skipped (no tags), %d errors of %d",
+        tagged, skipped, errors, len(articles),
+    )
+    return {
+        "tagged": tagged,
+        "skipped": skipped,
+        "errors": errors,
+        "total": len(articles),
+        "error_detail": last_error[:300],
+    }
 
 
 class AutoTagByIdsIn(BaseModel):

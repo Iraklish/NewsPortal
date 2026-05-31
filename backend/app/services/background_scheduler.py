@@ -415,12 +415,22 @@ async def _run_auto_tag_backfill() -> None:
             return
 
         from .tagger import ai_extract_tags
+        from ..routers.articles import _entertainment_condition
+
+        # "entertainment" is a virtual category spanning all categories via
+        # tags/title keywords — match the same broad filter the News page uses.
+        other_cats = [c for c in auto_tag_cats if c != "entertainment"]
+        cat_conds = []
+        if other_cats:
+            cat_conds.append(Article.category.in_(other_cats))
+        if "entertainment" in auto_tag_cats:
+            cat_conds.append(_entertainment_condition(db, Article))
 
         # Untagged = tags column NULL or an empty JSON array.
         untagged = (
             db.query(Article)
             .filter(or_(Article.tags.is_(None), Article.tags == "[]"))
-            .filter(Article.category.in_(auto_tag_cats))
+            .filter(or_(*cat_conds))
             .order_by(Article.id.desc())
             .limit(_AUTO_TAG_BACKFILL_CAP)
             .all()
@@ -433,7 +443,7 @@ async def _run_auto_tag_backfill() -> None:
             "[auto-tag] backfill: tagging %d untagged article(s) in categories %s",
             len(untagged), sorted(auto_tag_cats),
         )
-        tag_ok = tag_err = 0
+        tag_ok = tag_skip = tag_err = 0
         for article in untagged:
             try:
                 new_tags = await ai_extract_tags(article, db)
@@ -442,14 +452,17 @@ async def _run_auto_tag_backfill() -> None:
                     db.commit()
                     tag_ok += 1
                 else:
-                    tag_err += 1
+                    tag_skip += 1
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 db.rollback()
-                logger.debug("[auto-tag] backfill failed for article %d: %s", article.id, exc)
+                logger.warning("[auto-tag] backfill failed for article %d: %s", article.id, exc)
                 tag_err += 1
-        logger.info("[auto-tag] backfill complete: %d tagged, %d errors", tag_ok, tag_err)
+        logger.info(
+            "[auto-tag] backfill complete: %d tagged, %d no-tags, %d errors",
+            tag_ok, tag_skip, tag_err,
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:
