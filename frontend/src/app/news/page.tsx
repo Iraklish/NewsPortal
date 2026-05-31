@@ -92,7 +92,7 @@ export default function NewsPage() {
   const [category, setCategory] = useState<string>('')
   const [allTags, setAllTags] = useState<string[]>([])
   const [tag, setTag] = useState<string>('')
-  const [hours, setHours] = useState<number>(0)
+  const [hours, setHours] = useState<number>(24)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
