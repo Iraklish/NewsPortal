@@ -937,6 +937,12 @@ function TagsEditor({
   const [tags, setTags] = useState<string[]>(initialTags || [])
   const [inputVal, setInputVal] = useState('')
   const [autoTagging, setAutoTagging] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
+
+  // Collapse by default on small (mobile) viewports to save vertical space.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 640) setCollapsed(true)
+  }, [])
 
   async function saveTags(newTags: string[]) {
     setTags(newTags)
@@ -963,54 +969,68 @@ function TagsEditor({
 
   return (
     <div className="bg-[#0a0f1e] rounded-lg p-3 border border-[#1e2433]">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-[10px] font-bold text-teal-500 uppercase tracking-wider flex-1">Topic Tags</span>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
+          title={collapsed ? 'Expand tags' : 'Collapse tags'}
+        >
+          {collapsed ? <ChevronRight size={12} className="text-teal-500 flex-shrink-0" /> : <ChevronDown size={12} className="text-teal-500 flex-shrink-0" />}
+          <span className="text-[10px] font-bold text-teal-500 uppercase tracking-wider">Topic Tags</span>
+          {tags.length > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded-full leading-none">{tags.length}</span>
+          )}
+        </button>
         <button
           onClick={autoTag}
           disabled={autoTagging}
           title="Auto-extract English tags using AI (works for any language)"
-          className="flex items-center gap-1 text-[10px] px-2 py-0.5 bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded hover:bg-teal-500/20 transition-colors disabled:opacity-50"
+          className="flex items-center gap-1 text-[10px] px-2 py-0.5 bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded hover:bg-teal-500/20 transition-colors disabled:opacity-50 flex-shrink-0"
         >
           {autoTagging ? <Loader2 size={9} className="animate-spin" /> : <Sparkles size={9} />}
           Auto-tag
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-2 min-h-[22px]">
-        {tags.length === 0 && (
-          <span className="text-[10px] text-slate-600 italic">No tags yet — add manually or click Auto-tag</span>
-        )}
-        {tags.map(t => (
-          <span
-            key={t}
-            className="flex items-center gap-1 text-[10px] px-2 py-0.5 bg-teal-500/10 text-teal-300 border border-teal-500/20 rounded-full"
-          >
-            {t}
-            <button
-              onClick={() => saveTags(tags.filter(x => x !== t))}
-              className="text-teal-500 hover:text-teal-200 ml-0.5 leading-none"
-              title={`Remove tag "${t}"`}
-            >×</button>
-          </span>
-        ))}
-      </div>
+      {!collapsed && (
+        <>
+          <div className="flex flex-wrap gap-1.5 mb-2 mt-2 min-h-[22px]">
+            {tags.length === 0 && (
+              <span className="text-[10px] text-slate-600 italic">No tags yet — add manually or click Auto-tag</span>
+            )}
+            {tags.map(t => (
+              <span
+                key={t}
+                className="flex items-center gap-1 text-[10px] px-2 py-0.5 bg-teal-500/10 text-teal-300 border border-teal-500/20 rounded-full"
+              >
+                {t}
+                <button
+                  onClick={() => saveTags(tags.filter(x => x !== t))}
+                  className="text-teal-500 hover:text-teal-200 ml-0.5 leading-none"
+                  title={`Remove tag "${t}"`}
+                >×</button>
+              </span>
+            ))}
+          </div>
 
-      <div className="flex gap-1.5">
-        <input
-          value={inputVal}
-          onChange={e => setInputVal(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
-          placeholder="Add a tag…"
-          className="flex-1 bg-[#0d1117] border border-[#1e2433] rounded px-2 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-teal-500/50 transition-colors"
-        />
-        <button
-          onClick={addTag}
-          disabled={!inputVal.trim()}
-          className="px-2.5 py-1 text-[11px] bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 rounded border border-teal-500/20 disabled:opacity-40 transition-colors"
-        >
-          Add
-        </button>
-      </div>
+          <div className="flex gap-1.5">
+            <input
+              value={inputVal}
+              onChange={e => setInputVal(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
+              placeholder="Add a tag…"
+              className="flex-1 bg-[#0d1117] border border-[#1e2433] rounded px-2 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-teal-500/50 transition-colors"
+            />
+            <button
+              onClick={addTag}
+              disabled={!inputVal.trim()}
+              className="px-2.5 py-1 text-[11px] bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 rounded border border-teal-500/20 disabled:opacity-40 transition-colors"
+            >
+              Add
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -1269,12 +1289,12 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
         <div className="border-t border-[#1e2433] p-4 bg-[#0a0f1e] space-y-2.5">
 
           {/* Row 1 — Summarize (prominent) + Language */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-nowrap">
             <button
               onClick={() => send('summarize')}
               disabled={busy}
               title="One-click article summary"
-              className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded-lg text-sm text-white font-semibold transition-colors"
+              className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded-lg text-xs sm:text-sm text-white font-semibold transition-colors whitespace-nowrap flex-shrink-0"
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <BookOpen size={14} />}
               Summarize
@@ -1283,17 +1303,17 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
               onClick={() => send('factcheck')}
               disabled={busy}
               title="Fact-check this article's claims against live web sources"
-              className="flex items-center gap-1.5 px-4 py-2 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 rounded-lg text-sm text-white font-semibold transition-colors"
+              className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 rounded-lg text-xs sm:text-sm text-white font-semibold transition-colors whitespace-nowrap flex-shrink-0"
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
               Fact Check
             </button>
-            <div className="flex-1" />
-            <Globe size={13} className="text-slate-500 flex-shrink-0" />
+            <div className="flex-1 min-w-0" />
+            <Globe size={13} className="text-slate-500 flex-shrink-0 hidden sm:block" />
             <select
               value={language}
               onChange={e => setLanguage(e.target.value as Lang)}
-              className="bg-[#0d1117] border border-[#1e2433] hover:border-indigo-500/40 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
+              className="bg-[#0d1117] border border-[#1e2433] hover:border-indigo-500/40 rounded-lg px-1.5 sm:px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer flex-shrink-0"
             >
               {LANGUAGES.map(l => (
                 <option key={l} value={l}>{l}</option>
