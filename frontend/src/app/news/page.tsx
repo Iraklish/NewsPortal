@@ -1053,6 +1053,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
   const [error, setError] = useState('')
   const [language, setLanguage] = useState<Lang>('English')
   const [maximized, setMaximized] = useState(false)
+  const [presetsOpen, setPresetsOpen] = useState(false)
   const [summarizePrompt, setSummarizePrompt] = useState(
     'Please provide a concise summary of this article. Cover: the main topic, key facts or figures, who is involved, why it matters, and any immediate implications.',
   )
@@ -1288,28 +1289,18 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
         {/* Composer */}
         <div className="border-t border-[#1e2433] p-4 bg-[#0a0f1e] space-y-2.5">
 
-          {/* Row 1 — Summarize (prominent) + Language */}
-          <div className="flex items-center gap-1.5 flex-nowrap">
+          {/* Controls — collapsible aspect presets toggle + language */}
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => send('summarize')}
-              disabled={busy}
-              title="One-click article summary"
-              className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded-lg text-xs sm:text-sm text-white font-semibold transition-colors whitespace-nowrap flex-shrink-0"
+              onClick={() => setPresetsOpen(o => !o)}
+              className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-white transition-colors"
+              title={presetsOpen ? 'Hide quick aspects' : 'Show quick aspects'}
             >
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <BookOpen size={14} />}
-              Summarize
-            </button>
-            <button
-              onClick={() => send('factcheck')}
-              disabled={busy}
-              title="Fact-check this article's claims against live web sources"
-              className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 rounded-lg text-xs sm:text-sm text-white font-semibold transition-colors whitespace-nowrap flex-shrink-0"
-            >
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-              Fact Check
+              {presetsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+              Quick aspects
             </button>
             <div className="flex-1 min-w-0" />
-            <Globe size={13} className="text-slate-500 flex-shrink-0 hidden sm:block" />
+            <Globe size={13} className="text-slate-500 flex-shrink-0" />
             <select
               value={language}
               onChange={e => setLanguage(e.target.value as Lang)}
@@ -1321,50 +1312,72 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
             </select>
           </div>
 
-          {/* Row 2 — Aspect preset chips */}
-          <div className="flex flex-wrap gap-1.5">
-            {ASPECT_PRESETS.map(p => (
-              <button
-                key={p}
-                onClick={() => setInput(p)}
-                disabled={busy}
-                className="text-[10px] px-2 py-0.5 bg-[#0d1117] border border-[#1e2433] hover:border-indigo-500/40 text-slate-400 hover:text-white rounded-full transition-colors disabled:opacity-40"
-              >
-                {p}
-              </button>
-            ))}
-          </div>
+          {/* Aspect preset chips — collapsed by default */}
+          {presetsOpen && (
+            <div className="flex flex-wrap gap-1.5">
+              {ASPECT_PRESETS.map(p => (
+                <button
+                  key={p}
+                  onClick={() => setInput(p)}
+                  disabled={busy}
+                  className="text-[10px] px-2 py-0.5 bg-[#0d1117] border border-[#1e2433] hover:border-indigo-500/40 text-slate-400 hover:text-white rounded-full transition-colors disabled:opacity-40"
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          )}
 
-          {/* Row 3 — Textarea + Ask + Analyze */}
-          <div className="flex gap-2">
-            <textarea
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send('ask') }
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send('analyze') }
-              }}
-              rows={1}
-              placeholder="Ask a question or describe a focus aspect…"
-              className="flex-1 bg-[#0d1117] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 resize-none max-h-32 leading-relaxed"
-              style={{ minHeight: 38 }}
-            />
+          {/* Textarea */}
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send('ask') }
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send('analyze') }
+            }}
+            rows={1}
+            placeholder="Ask a question or describe a focus aspect…"
+            className="w-full bg-[#0d1117] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 resize-none max-h-32 leading-relaxed"
+            style={{ minHeight: 38 }}
+          />
+
+          {/* All action buttons — one row under the input */}
+          <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto">
+            <button
+              onClick={() => send('summarize')}
+              disabled={busy}
+              title="One-click article summary"
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded-lg text-xs text-white font-semibold transition-colors whitespace-nowrap flex-shrink-0"
+            >
+              {busy ? <Loader2 size={13} className="animate-spin" /> : <BookOpen size={13} />}
+              Summarize
+            </button>
+            <button
+              onClick={() => send('factcheck')}
+              disabled={busy}
+              title="Fact-check this article's claims against live web sources"
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 rounded-lg text-xs text-white font-semibold transition-colors whitespace-nowrap flex-shrink-0"
+            >
+              {busy ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
+              Fact Check
+            </button>
             <button
               onClick={() => send('ask')}
               disabled={busy || !input.trim()}
               title="Ask (Enter) — quick chat answer"
-              className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium transition-colors"
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-lg text-xs text-white font-medium transition-colors whitespace-nowrap flex-shrink-0"
             >
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              {busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
               Ask
             </button>
             <button
               onClick={() => send('analyze')}
               disabled={busy || !input.trim()}
               title="Analyze (⌘/Ctrl+Enter) — save a structured analysis"
-              className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium transition-colors"
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg text-xs text-white font-medium transition-colors whitespace-nowrap flex-shrink-0"
             >
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {busy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
               Analyze
             </button>
           </div>
