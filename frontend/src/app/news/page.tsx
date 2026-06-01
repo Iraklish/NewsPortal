@@ -1054,6 +1054,7 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
   const [language, setLanguage] = useState<Lang>('English')
   const [maximized, setMaximized] = useState(false)
   const [presetsOpen, setPresetsOpen] = useState(false)
+  const [titleExpanded, setTitleExpanded] = useState(false)
   const [summarizePrompt, setSummarizePrompt] = useState(
     'Please provide a concise summary of this article. Cover: the main topic, key facts or figures, who is involved, why it matters, and any immediate implications.',
   )
@@ -1196,7 +1197,18 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
                 </span>
               )}
             </div>
-            <h2 className="text-lg font-bold text-white leading-snug">{article.title}</h2>
+            <button
+              onClick={() => setTitleExpanded(v => !v)}
+              title={titleExpanded ? 'Collapse title' : 'Expand title'}
+              className="flex items-start gap-1.5 text-left w-full group"
+            >
+              {titleExpanded
+                ? <ChevronDown size={16} className="text-slate-500 group-hover:text-white flex-shrink-0 mt-1" />
+                : <ChevronRight size={16} className="text-slate-500 group-hover:text-white flex-shrink-0 mt-1" />}
+              <h2 className={clsx('text-lg font-bold text-white leading-snug', !titleExpanded && 'line-clamp-1')}>
+                {article.title}
+              </h2>
+            </button>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
             <button
