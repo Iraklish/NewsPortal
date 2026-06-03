@@ -7,7 +7,7 @@ import { useLanguage } from '@/lib/language'
 import {
   Sparkles, Loader2, ExternalLink, Trash2, AlertCircle, Globe, Database,
   TrendingUp, TrendingDown, Zap, ChevronRight, RefreshCw, Search,
-  MessageCircle, Send, ChevronDown, ChevronUp, Maximize2, Minimize2,
+  MessageCircle, Send, ChevronDown, ChevronUp, Maximize2, Minimize2, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -52,6 +52,7 @@ export default function AnalysisPage() {
   const [error, setError] = useState('')
   const [current, setCurrent] = useState<DirectedReport | null>(null)
   const [reports, setReports] = useState<DirectedReport[]>([])
+  const [poppedReport, setPoppedReport] = useState<DirectedReport | null>(null)
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [previewCount, setPreviewCount] = useState<number | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -309,10 +310,10 @@ export default function AnalysisPage() {
             {reports.map(r => (
               <button
                 key={r.id}
-                onClick={() => setCurrent(r)}
+                onClick={() => setPoppedReport(r)}
                 className={clsx(
                   'w-full text-left bg-[#0d1117] border rounded-xl p-3 transition-colors flex items-center gap-3',
-                  current?.id === r.id
+                  poppedReport?.id === r.id
                     ? 'border-indigo-500/50 bg-indigo-500/5'
                     : 'border-[#1e2433] hover:border-[#2d3148]'
                 )}
@@ -333,6 +334,14 @@ export default function AnalysisPage() {
           </div>
         )}
       </div>
+
+      {poppedReport && (
+        <ReportCard
+          report={poppedReport}
+          onDelete={() => { deleteReport(poppedReport.id); setPoppedReport(null) }}
+          onClose={() => setPoppedReport(null)}
+        />
+      )}
     </div>
   )
 }
@@ -356,9 +365,17 @@ function Option({ label, on, onChange, hint, disabled }: { label: string; on: bo
 }
 
 
-function ReportCard({ report, onDelete, expanded }: { report: DirectedReport; onDelete: () => void; expanded?: boolean }) {
+function ReportCard({ report, onDelete, expanded, onClose }: { report: DirectedReport; onDelete: () => void; expanded?: boolean; onClose?: () => void }) {
   const [chatOpen, setChatOpen] = useState(false)
   const [maximized, setMaximized] = useState(false)
+
+  // In modal (pop-out) mode, close on Escape.
+  useEffect(() => {
+    if (!onClose) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const inner = (
     <div className={clsx(
@@ -398,6 +415,11 @@ function ReportCard({ report, onDelete, expanded }: { report: DirectedReport; on
           <button onClick={onDelete} className="p-1.5 text-slate-600 hover:text-red-400 transition-colors rounded">
             <Trash2 size={14} />
           </button>
+          {onClose && (
+            <button onClick={onClose} title="Close" aria-label="Close" className="p-1.5 text-slate-600 hover:text-white hover:bg-white/10 transition-colors rounded">
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -540,6 +562,23 @@ function ReportCard({ report, onDelete, expanded }: { report: DirectedReport; on
       )}
     </div>
   )
+
+  // Pop-out (modal) mode: backdrop click closes; maximize toggles full-bleed.
+  if (onClose) {
+    return (
+      <div
+        className={clsx('fixed inset-0 z-50 bg-black/80 overflow-y-auto flex items-start justify-center', maximized ? 'p-0' : 'p-4 md:p-8')}
+        onClick={onClose}
+      >
+        <div
+          onClick={e => e.stopPropagation()}
+          className={clsx(maximized ? 'w-full min-h-screen' : 'w-full max-w-4xl my-auto')}
+        >
+          {inner}
+        </div>
+      </div>
+    )
+  }
 
   return maximized ? (
     <div className="fixed inset-0 z-50 bg-black/80 overflow-y-auto" onClick={() => setMaximized(false)}>
