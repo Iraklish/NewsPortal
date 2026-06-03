@@ -997,6 +997,20 @@ export const searchApi = {
   search(q: string, num = 100) {
     return request<WebSearchResponse>(`/search?q=${encodeURIComponent(q)}&num=${num}`)
   },
+
+  summarize(req: { query?: string; results: WebSearchResult[]; language?: string }) {
+    return request<{ summary: string; count: number; truncated: boolean }>('/search/summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: req.query,
+        language: req.language,
+        results: req.results.map(r => ({
+          title: r.title, url: r.url, snippet: r.snippet, source: r.source, published_at: r.published_at,
+        })),
+      }),
+    })
+  },
 }
 
 // ─── Logs ────────────────────────────────────────────────────────────────────

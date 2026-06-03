@@ -2,8 +2,10 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { searchApi, articlesApi, type WebSearchResult } from '@/lib/api'
-import { Search, Loader2, ExternalLink, Download, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Search, Loader2, ExternalLink, Download, CheckCircle2, AlertCircle, RefreshCw, ScrollText, CheckSquare, Square, X } from 'lucide-react'
 import clsx from 'clsx'
+import SummaryViewerModal from '@/components/SummaryViewerModal'
+import { useLanguage } from '@/lib/language'
 
 const ENGINE_COLORS: Record<string, string> = {
   duckduckgo: 'bg-orange-500/10 text-orange-400 border-orange-500/25',
@@ -46,7 +48,12 @@ export default function SearchPage() {
   const [error, setError]           = useState('')
   const [filter, setFilter]         = useState<Filter>('all')
   const [importing, setImporting]   = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({})
+  const [selected, setSelected]     = useState<Set<string>>(new Set())
+  const [summarizing, setSummarizing] = useState(false)
+  const [summary, setSummary]       = useState<string | null>(null)
+  const [summaryOpen, setSummaryOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const { apiLanguage } = useLanguage()
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
@@ -61,6 +68,7 @@ export default function SearchPage() {
     setEngines(null)
     setFilter('all')
     setImporting({})
+    setSelected(new Set())
     try {
       const data = await searchApi.search(q, 200)
       if (data.error) setError(data.error)
@@ -91,6 +99,46 @@ export default function SearchPage() {
   const filtered = filter === 'all'
     ? results
     : (perEngine[filter] ?? results.filter(r => (r.engine === 'google_cse' ? 'google' : r.engine) === filter))
+
+  function toggleSelect(url: string) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(url)) next.delete(url); else next.add(url)
+      return next
+    })
+  }
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every(r => selected.has(r.url))
+
+  function toggleSelectAll() {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (allFilteredSelected) filtered.forEach(r => next.delete(r.url))
+      else filtered.forEach(r => next.add(r.url))
+      return next
+    })
+  }
+
+  async function summarizeSelected() {
+    const chosen = results.filter(r => selected.has(r.url))
+    // de-dupe by url in case the same url appears across engine views
+    const seen = new Set<string>()
+    const unique = chosen.filter(r => (seen.has(r.url) ? false : (seen.add(r.url), true)))
+    if (unique.length === 0 || summarizing) return
+    setSummarizing(true)
+    setError('')
+    setSummary(null)
+    setSummaryOpen(true)
+    try {
+      const res = await searchApi.summarize({ query: query.trim(), results: unique, language: apiLanguage })
+      setSummary(res.summary)
+    } catch (err: unknown) {
+      setSummaryOpen(false)
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSummarizing(false)
+    }
+  }
 
   function engineCount(f: Filter): number {
     if (!engines) return 0
@@ -170,6 +218,38 @@ export default function SearchPage() {
         </div>
       )}
 
+      {/* Selection toolbar */}
+      {!loading && filtered.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-3 px-3 py-2 bg-[#0d1117] border border-[#1e2433] rounded-lg">
+          <button
+            onClick={toggleSelectAll}
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+          >
+            {allFilteredSelected ? <CheckSquare size={14} className="text-indigo-400" /> : <Square size={14} />}
+            {allFilteredSelected ? 'Clear all' : `Select all (${filtered.length})`}
+          </button>
+          {selected.size > 0 && (
+            <button
+              onClick={() => setSelected(new Set())}
+              className="flex items-center gap-1 text-xs text-slate-500 hover:text-white transition-colors"
+              title="Clear selection"
+            >
+              <X size={11} /> {selected.size} selected
+            </button>
+          )}
+          <div className="flex-1" />
+          <button
+            onClick={summarizeSelected}
+            disabled={selected.size === 0 || summarizing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 rounded-lg text-xs text-white font-medium transition-colors"
+            title="AI summary of the selected results"
+          >
+            {summarizing ? <Loader2 size={12} className="animate-spin" /> : <ScrollText size={12} />}
+            Summarize{selected.size > 0 ? ` (${selected.size})` : ''}
+          </button>
+        </div>
+      )}
+
       {/* Loading skeleton */}
       {loading && (
         <div className="space-y-3">
@@ -193,9 +273,20 @@ export default function SearchPage() {
             return (
               <div
                 key={i}
-                className="bg-[#0d1117] border border-[#1e2433] rounded-xl p-4 hover:border-[#2d3148] transition-colors group"
+                className={clsx(
+                  'bg-[#0d1117] border rounded-xl p-4 transition-colors group',
+                  selected.has(r.url) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-[#1e2433] hover:border-[#2d3148]',
+                )}
               >
                 <div className="flex items-start gap-3">
+                  <button
+                    onClick={() => toggleSelect(r.url)}
+                    className="mt-0.5 flex-shrink-0 text-slate-600 hover:text-indigo-400 transition-colors"
+                    title={selected.has(r.url) ? 'Deselect' : 'Select'}
+                    aria-label={selected.has(r.url) ? 'Deselect result' : 'Select result'}
+                  >
+                    {selected.has(r.url) ? <CheckSquare size={16} className="text-indigo-400" /> : <Square size={16} />}
+                  </button>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className={clsx(
@@ -276,6 +367,23 @@ export default function SearchPage() {
         <div className="text-center py-20 text-slate-700 text-sm">
           Enter a query above to search across DDG, Bing, Yahoo, Startpage and Google simultaneously.
         </div>
+      )}
+
+      {summaryOpen && (
+        summarizing || summary == null ? (
+          <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4" onClick={() => !summarizing && setSummaryOpen(false)}>
+            <div className="flex items-center gap-2 text-sm text-slate-300 bg-[#0d1117] border border-[#1e2433] rounded-xl px-5 py-4">
+              <Loader2 size={16} className="animate-spin text-indigo-400" />
+              Summarizing {selected.size} result{selected.size === 1 ? '' : 's'}…
+            </div>
+          </div>
+        ) : (
+          <SummaryViewerModal
+            title={`Summary of ${selected.size} web result${selected.size === 1 ? '' : 's'}`}
+            content={summary}
+            onClose={() => setSummaryOpen(false)}
+          />
+        )
       )}
     </div>
   )
