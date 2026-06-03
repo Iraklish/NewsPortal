@@ -261,6 +261,11 @@ async def generate_summary(
                     Article.title.ilike(pat),
                     Article.content.ilike(pat),
                     Article.summary.ilike(pat),
+                    # Match tags too, so keyword summaries are consistent with the
+                    # News page filter (which also matches by tag).
+                    sa_text(
+                        "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) LIKE lower(:qtag))"
+                    ).bindparams(qtag=pat),
                 ))
 
         limit_val = body.max_articles if body.max_articles > 0 else 5000
