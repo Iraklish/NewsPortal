@@ -111,7 +111,7 @@ export const authApi = {
       body: JSON.stringify({ username, password, is_admin }),
     })
   },
-  updateUser(id: number, patch: { is_active?: boolean; is_admin?: boolean }) {
+  updateUser(id: number, patch: { username?: string; is_active?: boolean; is_admin?: boolean }) {
     return request<AuthUser>(`/auth/users/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

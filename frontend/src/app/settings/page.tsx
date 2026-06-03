@@ -726,7 +726,7 @@ function ChangePasswordCard({ showToast }: { showToast: (msg: string, type: 'suc
 }
 
 function UsersManager({ showToast }: { showToast: (msg: string, type: 'success' | 'error') => void }) {
-  const { user } = useAuth()
+  const { user, refresh } = useAuth()
   const [users, setUsers] = useState<AuthUser[]>([])
   const [loading, setLoading] = useState(true)
   const [newUsername, setNewUsername] = useState('')
@@ -767,6 +767,21 @@ function UsersManager({ showToast }: { showToast: (msg: string, type: 'success' 
   async function toggleActive(u: AuthUser) {
     try { await authApi.updateUser(u.id, { is_active: !u.is_active }); reload() }
     catch (e: unknown) { showToast(e instanceof Error ? e.message : 'Update failed', 'error') }
+  }
+
+  async function renameUser(u: AuthUser) {
+    const name = window.prompt(`New login name for "${u.username}":`, u.username)
+    if (name == null) return
+    const trimmed = name.trim()
+    if (!trimmed || trimmed === u.username) return
+    try {
+      await authApi.updateUser(u.id, { username: trimmed })
+      showToast('Login name changed', 'success')
+      if (u.id === user?.id) await refresh()  // keep sidebar / account in sync
+      reload()
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Rename failed', 'error')
+    }
   }
 
   async function resetPw(u: AuthUser) {
@@ -818,6 +833,7 @@ function UsersManager({ showToast }: { showToast: (msg: string, type: 'success' 
               {!u.is_active && <span className="text-[10px] px-1.5 py-0.5 bg-slate-600/20 text-slate-500 border border-slate-600/30 rounded uppercase tracking-wider">Disabled</span>}
               {u.id === user.id && <span className="text-[10px] text-slate-600">(you)</span>}
               <div className="flex-1" />
+              <button onClick={() => renameUser(u)} title="Change login name" className="p-1.5 text-slate-500 hover:text-white transition-colors"><Edit2 size={14} /></button>
               <button onClick={() => resetPw(u)} title="Reset password" className="p-1.5 text-slate-500 hover:text-indigo-400 transition-colors"><KeyRound size={14} /></button>
               {u.id !== user.id && (
                 <>

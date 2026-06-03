@@ -154,6 +154,7 @@ class AdminResetPasswordRequest(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    username: Optional[str] = None
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
 

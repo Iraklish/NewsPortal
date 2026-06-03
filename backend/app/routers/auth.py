@@ -162,6 +162,14 @@ def update_user(
     target = db.query(User).filter(User.id == user_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    if body.username is not None:
+        new_name = body.username.strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="Username cannot be empty")
+        clash = db.query(User).filter(User.username == new_name, User.id != target.id).first()
+        if clash:
+            raise HTTPException(status_code=409, detail="Username already exists")
+        target.username = new_name
     if body.is_active is not None:
         if target.id == admin.id and not body.is_active:
             raise HTTPException(status_code=400, detail="You cannot deactivate your own account")
