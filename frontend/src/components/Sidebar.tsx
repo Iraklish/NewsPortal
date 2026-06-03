@@ -1,10 +1,11 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart2, LineChart, Network, Settings, MessageSquare, Newspaper, FileText, Menu, X, Send, Search, ScrollText, Languages } from 'lucide-react'
+import { BarChart2, LineChart, Network, Settings, MessageSquare, Newspaper, FileText, Menu, X, Send, Search, ScrollText, Languages, LogOut, UserCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import AIChatPanel from './AIChatPanel'
 import { useLanguage, LANGUAGES, Lang } from '@/lib/language'
+import { useAuth } from '@/lib/auth'
 
 const nav = [
   { href: '/news', label: 'News', icon: Newspaper },
@@ -24,6 +25,7 @@ export default function Sidebar() {
   const [chatOpen, setChatOpen] = useState(false)
   const [chatUsed, setChatUsed] = useState(false)
   const { language, setLanguage } = useLanguage()
+  const { user, logout } = useAuth()
 
   // Close sidebar on route change (mobile nav tap)
   useEffect(() => { setOpen(false) }, [pathname])
@@ -141,6 +143,25 @@ export default function Sidebar() {
             )}
           </button>
         </div>
+
+        {/* Signed-in user + logout */}
+        {user && (
+          <div className="p-3 border-t border-[#1e2433] flex items-center gap-2">
+            <UserCircle size={18} className="text-slate-500 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-slate-300 truncate">{user.username}</p>
+              <p className="text-[10px] text-slate-600">{user.is_admin ? 'Administrator' : 'User'}</p>
+            </div>
+            <button
+              onClick={logout}
+              title="Sign out"
+              aria-label="Sign out"
+              className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-white/5 transition-colors flex-shrink-0"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
+        )}
       </aside>
 
       {chatOpen && (

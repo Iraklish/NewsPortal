@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     log_retention_hours: int = 24  # how many hourly log files to keep
     log_level: str = "INFO"
 
+    # Authentication
+    auth_token_expire_minutes: int = 60 * 24 * 7   # access-token lifetime (7 days)
+    initial_admin_username: str = "admin"          # seeded on first run if no users exist
+    initial_admin_password: str = ""               # if empty, a random one is generated + logged
+
     class Config:
         env_file = ".env"
         extra = "allow"

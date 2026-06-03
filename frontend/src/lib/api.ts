@@ -14,9 +14,44 @@ function resolveBase(): string {
 
 const BASE = resolveBase()
 
+// ─── Auth token (localStorage bearer) ──────────────────────────────────────────
+const TOKEN_KEY = 'np_auth_token'
+
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null
+  try { return window.localStorage.getItem(TOKEN_KEY) } catch { return null }
+}
+
+export function setAuthToken(token: string): void {
+  if (typeof window === 'undefined') return
+  try { window.localStorage.setItem(TOKEN_KEY, token) } catch {}
+}
+
+export function clearAuthToken(): void {
+  if (typeof window === 'undefined') return
+  try { window.localStorage.removeItem(TOKEN_KEY) } catch {}
+}
+
+function redirectToSignin(): void {
+  if (typeof window === 'undefined') return
+  if (window.location.pathname !== '/signin') {
+    window.location.href = '/signin'
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, options)
+  const token = getAuthToken()
+  const headers = new Headers(options?.headers)
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  const res = await fetch(`${BASE}${path}`, { ...options, headers })
   if (!res.ok) {
+    // Session expired / invalid → clear token and bounce to the sign-in page
+    // (but never for the login call itself, which legitimately 401s on bad creds).
+    if (res.status === 401 && !path.startsWith('/auth/login')) {
+      clearAuthToken()
+      redirectToSignin()
+    }
     const text = await res.text()
     // FastAPI wraps errors in {"detail": "..."} (or an array). Unwrap for cleaner messages.
     let msg = text || `HTTP ${res.status}`
@@ -31,6 +66,69 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface AuthUser {
+  id: number
+  username: string
+  is_admin: boolean
+  is_active: boolean
+  created_at?: string
+  last_login_at?: string
+}
+
+export interface LoginResponse {
+  access_token: string
+  token_type: string
+  expires_in: number
+  user: AuthUser
+}
+
+export const authApi = {
+  login(username: string, password: string) {
+    return request<LoginResponse>('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })
+  },
+  me() {
+    return request<AuthUser>('/auth/me')
+  },
+  changePassword(current_password: string, new_password: string) {
+    return request<{ changed: boolean }>('/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password, new_password }),
+    })
+  },
+  listUsers() {
+    return request<AuthUser[]>('/auth/users')
+  },
+  createUser(username: string, password: string, is_admin: boolean) {
+    return request<AuthUser>('/auth/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, is_admin }),
+    })
+  },
+  updateUser(id: number, patch: { is_active?: boolean; is_admin?: boolean }) {
+    return request<AuthUser>(`/auth/users/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+  },
+  resetUserPassword(id: number, new_password: string) {
+    return request<AuthUser>(`/auth/users/${id}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_password }),
+    })
+  },
+  deleteUser(id: number) {
+    return request<{ deleted: boolean; id: number }>(`/auth/users/${id}`, { method: 'DELETE' })
+  },
+}
 
 export interface Article {
   id: number

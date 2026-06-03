@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { settingsApi, sourcesApi, articlesApi, type AppSettingsOut, type SettingsUpdate, type RssSource } from '@/lib/api'
-import { CheckCircle, AlertCircle, Eye, EyeOff, Save, RefreshCw, Trash2, Plus, Loader2, Rss, Cpu, MessageSquare, Database, Newspaper, RotateCcw, Search, ChevronDown, ChevronRight, Edit2, X, Check, Upload, Tag, Power, Square, CheckSquare, Clock, Sparkles } from 'lucide-react'
+import { settingsApi, sourcesApi, articlesApi, authApi, type AppSettingsOut, type SettingsUpdate, type RssSource, type AuthUser } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
+import { CheckCircle, AlertCircle, Eye, EyeOff, Save, RefreshCw, Trash2, Plus, Loader2, Rss, Cpu, MessageSquare, Database, Newspaper, RotateCcw, Search, ChevronDown, ChevronRight, Edit2, X, Check, Upload, Tag, Power, Square, CheckSquare, Clock, Sparkles, Users, UserPlus, Shield, Lock, KeyRound } from 'lucide-react'
 
 const AI_PROVIDERS = [
   { value: 'anthropic', label: 'Anthropic (Claude)' },
@@ -40,7 +41,7 @@ export default function SettingsPage() {
   const [allCategories, setAllCategories] = useState<string[]>([])
   const [savingAutoTag, setSavingAutoTag] = useState(false)
 
-  const ALL_SECTIONS = ['ai', 'prompts', 'datasources', 'news'] as const
+  const ALL_SECTIONS = ['ai', 'prompts', 'datasources', 'news', 'account'] as const
   type SectionId = typeof ALL_SECTIONS[number]
   const [collapsedSections, setCollapsedSections] = useState<Set<SectionId>>(
     () => new Set<SectionId>(ALL_SECTIONS)
@@ -648,7 +649,186 @@ export default function SettingsPage() {
             <SourcesManager />
           </Card>
         </CollapsibleSection>
+
+        {/* ─────────  ACCOUNT & USERS  ───────── */}
+        <CollapsibleSection
+          icon={Shield}
+          label="Account & Users"
+          description="Change your password and (admins) manage user accounts"
+          collapsed={collapsedSections.has('account')}
+          onToggle={() => toggleSection('account')}
+        >
+          <Card title="Your Account">
+            <ChangePasswordCard showToast={showToast} />
+          </Card>
+          <Card title="Users">
+            <UsersManager showToast={showToast} />
+          </Card>
+        </CollapsibleSection>
       </div>
+    </div>
+  )
+}
+
+function ChangePasswordCard({ showToast }: { showToast: (msg: string, type: 'success' | 'error') => void }) {
+  const { user } = useAuth()
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit() {
+    if (next !== confirm) { showToast('New passwords do not match', 'error'); return }
+    if (next.length < 8) { showToast('New password must be at least 8 characters', 'error'); return }
+    setBusy(true)
+    try {
+      await authApi.changePassword(current, next)
+      setCurrent(''); setNext(''); setConfirm('')
+      showToast('Password changed', 'success')
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Change failed', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3 max-w-sm">
+      <p className="text-xs text-slate-500">
+        Signed in as <span className="text-slate-300 font-medium">{user?.username}</span>
+        {user?.is_admin && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded uppercase tracking-wider">Admin</span>}
+      </p>
+      <input
+        type="password" value={current} onChange={e => setCurrent(e.target.value)}
+        placeholder="Current password" autoComplete="current-password"
+        className="w-full bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+      />
+      <input
+        type="password" value={next} onChange={e => setNext(e.target.value)}
+        placeholder="New password (min 8 chars)" autoComplete="new-password"
+        className="w-full bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+      />
+      <input
+        type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
+        placeholder="Confirm new password" autoComplete="new-password"
+        className="w-full bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+      />
+      <button
+        onClick={submit}
+        disabled={busy || !current || !next || !confirm}
+        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium transition-colors"
+      >
+        {busy ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
+        Change password
+      </button>
+    </div>
+  )
+}
+
+function UsersManager({ showToast }: { showToast: (msg: string, type: 'success' | 'error') => void }) {
+  const { user } = useAuth()
+  const [users, setUsers] = useState<AuthUser[]>([])
+  const [loading, setLoading] = useState(true)
+  const [newUsername, setNewUsername] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [newAdmin, setNewAdmin] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  function reload() {
+    authApi.listUsers().then(setUsers).catch(() => {}).finally(() => setLoading(false))
+  }
+  useEffect(() => { reload() }, [])
+
+  if (!user?.is_admin) {
+    return <p className="text-xs text-slate-500">Only administrators can manage users.</p>
+  }
+
+  async function createUser() {
+    if (!newUsername.trim() || newPassword.length < 8) {
+      showToast('Username required and password must be at least 8 characters', 'error'); return
+    }
+    setBusy(true)
+    try {
+      await authApi.createUser(newUsername.trim(), newPassword, newAdmin)
+      setNewUsername(''); setNewPassword(''); setNewAdmin(false)
+      showToast('User created', 'success')
+      reload()
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Create failed', 'error')
+    } finally { setBusy(false) }
+  }
+
+  async function removeUser(u: AuthUser) {
+    if (!window.confirm(`Delete user "${u.username}"? This cannot be undone.`)) return
+    try { await authApi.deleteUser(u.id); showToast('User deleted', 'success'); reload() }
+    catch (e: unknown) { showToast(e instanceof Error ? e.message : 'Delete failed', 'error') }
+  }
+
+  async function toggleActive(u: AuthUser) {
+    try { await authApi.updateUser(u.id, { is_active: !u.is_active }); reload() }
+    catch (e: unknown) { showToast(e instanceof Error ? e.message : 'Update failed', 'error') }
+  }
+
+  async function resetPw(u: AuthUser) {
+    const pw = window.prompt(`New password for "${u.username}" (min 8 chars):`)
+    if (pw == null) return
+    if (pw.length < 8) { showToast('Password must be at least 8 characters', 'error'); return }
+    try { await authApi.resetUserPassword(u.id, pw); showToast('Password reset', 'success') }
+    catch (e: unknown) { showToast(e instanceof Error ? e.message : 'Reset failed', 'error') }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Create user */}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={newUsername} onChange={e => setNewUsername(e.target.value)}
+          placeholder="New username"
+          className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 w-40"
+        />
+        <input
+          type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+          placeholder="Password (min 8)" autoComplete="new-password"
+          className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 w-44"
+        />
+        <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
+          <input type="checkbox" checked={newAdmin} onChange={e => setNewAdmin(e.target.checked)} className="accent-indigo-500" />
+          Admin
+        </label>
+        <button
+          onClick={createUser}
+          disabled={busy}
+          className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg text-sm text-white font-medium transition-colors"
+        >
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+          Add user
+        </button>
+      </div>
+
+      {/* User list */}
+      {loading ? (
+        <Loader2 size={14} className="animate-spin text-slate-500" />
+      ) : (
+        <div className="space-y-1.5">
+          {users.map(u => (
+            <div key={u.id} className="flex items-center gap-2 bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2">
+              <Users size={14} className="text-slate-500 flex-shrink-0" />
+              <span className="text-sm text-slate-200 font-medium">{u.username}</span>
+              {u.is_admin && <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded uppercase tracking-wider">Admin</span>}
+              {!u.is_active && <span className="text-[10px] px-1.5 py-0.5 bg-slate-600/20 text-slate-500 border border-slate-600/30 rounded uppercase tracking-wider">Disabled</span>}
+              {u.id === user.id && <span className="text-[10px] text-slate-600">(you)</span>}
+              <div className="flex-1" />
+              <button onClick={() => resetPw(u)} title="Reset password" className="p-1.5 text-slate-500 hover:text-indigo-400 transition-colors"><KeyRound size={14} /></button>
+              {u.id !== user.id && (
+                <>
+                  <button onClick={() => toggleActive(u)} title={u.is_active ? 'Disable' : 'Enable'} className="p-1.5 text-slate-500 hover:text-amber-400 transition-colors"><Power size={14} /></button>
+                  <button onClick={() => removeUser(u)} title="Delete user" className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

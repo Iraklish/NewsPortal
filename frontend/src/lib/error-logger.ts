@@ -50,10 +50,15 @@ export function logToServer(entry: ClientLogEntry): void {
     user_agent: navigator.userAgent,
     context: entry.context,
   }
-  // fire-and-forget — never let the logger itself throw
+  // fire-and-forget — never let the logger itself throw.
+  // Include the auth token (the /logs route is protected); skip if not signed in.
+  let token: string | null = null
+  try { token = window.localStorage.getItem('np_auth_token') } catch {}
+  if (!token) return
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
   fetch(`${resolveBase()}/logs/client`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(payload),
     keepalive: true,
   }).catch(() => {})

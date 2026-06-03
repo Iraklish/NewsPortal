@@ -84,6 +84,17 @@ class AppSettings(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(128), unique=True, nullable=False, index=True)
+    password_hash = Column(String(256), nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+    last_login_at = Column(DateTime)
+
+
 class DirectedReport(Base):
     __tablename__ = "directed_reports"
     id = Column(Integer, primary_key=True, index=True)

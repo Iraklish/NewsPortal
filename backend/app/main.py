@@ -1,14 +1,58 @@
 import asyncio
+import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .auth_deps import get_current_user
+from .config import settings as app_settings
 from .database import SessionLocal, init_db
 from .logging_config import configure_logging
-from .routers import analysis, articles, logs, mindmap, search, settings, sources, stocks, telegram
+from .routers import analysis, articles, auth, logs, mindmap, search, settings, sources, stocks, telegram
 from .services.background_scheduler import run_scheduler, run_auto_tag_scheduler
+from .services.security import hash_password
+
+logger = logging.getLogger(__name__)
+
+
+def _ensure_initial_admin() -> None:
+    """Create the first admin account on a fresh install (no users yet).
+
+    Username/password come from env (INITIAL_ADMIN_USERNAME / INITIAL_ADMIN_PASSWORD)
+    or config; if no password is provided, a strong random one is generated and
+    logged ONCE so the operator can sign in and change it.
+    """
+    from .models import User
+    db = SessionLocal()
+    try:
+        if db.query(User).count() > 0:
+            return
+        username = (
+            os.getenv("INITIAL_ADMIN_USERNAME")
+            or app_settings.initial_admin_username
+            or "admin"
+        ).strip()
+        password = os.getenv("INITIAL_ADMIN_PASSWORD") or app_settings.initial_admin_password
+        generated = False
+        if not password:
+            password = secrets.token_urlsafe(12)
+            generated = True
+        db.add(User(username=username, password_hash=hash_password(password), is_admin=True, is_active=True))
+        db.commit()
+        if generated:
+            logger.warning("=" * 64)
+            logger.warning("INITIAL ADMIN ACCOUNT CREATED")
+            logger.warning("  username: %s", username)
+            logger.warning("  password: %s", password)
+            logger.warning("Sign in and change this password. It is shown only once.")
+            logger.warning("=" * 64)
+        else:
+            logger.info("Initial admin account created (username=%s, password from env/config)", username)
+    finally:
+        db.close()
 
 
 @asynccontextmanager
@@ -20,6 +64,8 @@ async def lifespan(app: FastAPI):
         configure_logging(db)
     finally:
         db.close()
+
+    _ensure_initial_admin()
 
     # Start the news-fetch scheduler as an asyncio background task.
     # It runs inside this process — no separate window or subprocess needed.
@@ -65,17 +111,23 @@ else:
         allow_headers=["*"],
     )
 
-app.include_router(articles.router, prefix="/articles", tags=["articles"])
-app.include_router(analysis.router, prefix="/analysis", tags=["analysis"])
-app.include_router(settings.router, prefix="/settings", tags=["settings"])
-app.include_router(stocks.router, prefix="/stocks", tags=["stocks"])
-app.include_router(mindmap.router, prefix="/mindmap", tags=["mindmap"])
-app.include_router(sources.router, prefix="/sources", tags=["sources"])
-app.include_router(logs.router, prefix="/logs", tags=["logs"])
-app.include_router(telegram.router, prefix="/telegram", tags=["telegram"])
-app.include_router(search.router, prefix="/search", tags=["search"])
+# Auth router is public (login lives here); its own routes guard themselves.
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
+
+# Every other router requires a valid Bearer token.
+_protected = [Depends(get_current_user)]
+app.include_router(articles.router, prefix="/articles", tags=["articles"], dependencies=_protected)
+app.include_router(analysis.router, prefix="/analysis", tags=["analysis"], dependencies=_protected)
+app.include_router(settings.router, prefix="/settings", tags=["settings"], dependencies=_protected)
+app.include_router(stocks.router, prefix="/stocks", tags=["stocks"], dependencies=_protected)
+app.include_router(mindmap.router, prefix="/mindmap", tags=["mindmap"], dependencies=_protected)
+app.include_router(sources.router, prefix="/sources", tags=["sources"], dependencies=_protected)
+app.include_router(logs.router, prefix="/logs", tags=["logs"], dependencies=_protected)
+app.include_router(telegram.router, prefix="/telegram", tags=["telegram"], dependencies=_protected)
+app.include_router(search.router, prefix="/search", tags=["search"], dependencies=_protected)
 
 
 @app.get("/health")
 async def health():
+    """Public liveness probe — no data exposed, safe for monitoring."""
     return {"status": "ok"}
