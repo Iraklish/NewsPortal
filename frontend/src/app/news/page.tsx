@@ -319,24 +319,40 @@ export default function NewsPage() {
 
   // Summarize the currently displayed (filtered) results, mapping the active
   // filters onto the summary endpoint. Honors category / keyword / tag + window.
+  // Note: the trailing time window slides with "now", and articles arrive in
+  // bursts, so we also refresh the matching count at the same moment to keep the
+  // "N matching" label and the summary's article count in sync.
   async function summarizeDisplayed() {
     setSummarizing(true)
     setSummaryError('')
     setSummaryData(null)
     setSummaryOpen(true)
     try {
+      const isUntagged = tag === TAG_NONE
       let filter_type: 'tag' | 'category' | 'keyword' | undefined
       let filter_value: string | undefined
       if (query.trim()) { filter_type = 'keyword'; filter_value = query.trim() }
-      else if (tag) { filter_type = 'tag'; filter_value = tag }
+      else if (tag && !isUntagged) { filter_type = 'tag'; filter_value = tag }
       else if (category) { filter_type = 'category'; filter_value = category }
-      const res = await analysisApi.summarize({
-        filter_type,
-        filter_value,
-        time_window_hours: hours,
-        max_articles: 0,
-        language: apiLanguage,
-      })
+
+      const [res] = await Promise.all([
+        analysisApi.summarize({
+          filter_type,
+          filter_value,
+          time_window_hours: hours,
+          max_articles: 0,
+          language: apiLanguage,
+        }),
+        // Re-count matching articles at the same instant so the header label
+        // reflects the same snapshot the summary was built from.
+        articlesApi.count({
+          category: category || undefined,
+          q: query.trim() || undefined,
+          tag: isUntagged ? undefined : (tag || undefined),
+          untagged: isUntagged || undefined,
+          hours: hours || undefined,
+        }).then(c => setTotalCount(c.count)).catch(() => {}),
+      ])
       setSummaryData(res)
     } catch (e: unknown) {
       setSummaryError(e instanceof Error ? e.message : String(e))
