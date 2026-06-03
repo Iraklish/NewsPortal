@@ -3,11 +3,12 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   ScrollText, Tag, Layers, Search, Sparkles, RefreshCw,
   ChevronRight, Clock, FileText, ExternalLink,
-  ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter,
+  ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter, Maximize2,
 } from 'lucide-react'
 import { analysisApi, articlesApi, SummaryResponse } from '@/lib/api'
 import SummaryMarkdown from '@/components/SummaryMarkdown'
 import MessageContent from '@/components/MessageContent'
+import SummaryViewerModal from '@/components/SummaryViewerModal'
 import { useLanguage } from '@/lib/language'
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -114,6 +115,7 @@ export default function SummaryPage() {
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState<string | null>(null)
   const [result, setResult]           = useState<SummaryResponse | null>(null)
+  const [viewerOpen, setViewerOpen]   = useState(false)
 
   // autocomplete
   const [categories, setCategories]   = useState<string[]>([])
@@ -407,7 +409,16 @@ export default function SummaryPage() {
 
           {/* Summary text */}
           <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5">
-            <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-4">Summary</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium">Summary</h2>
+              <button
+                onClick={() => setViewerOpen(true)}
+                title="Pop out — enlarge & search"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-indigo-300 bg-indigo-600/15 border border-indigo-500/30 hover:bg-indigo-600/30 transition-colors"
+              >
+                <Maximize2 size={12} /> Pop out
+              </button>
+            </div>
             <SummaryMarkdown content={result.summary} />
           </div>
 
@@ -591,6 +602,15 @@ export default function SummaryPage() {
           </div>
 
         </div>
+      )}
+
+      {viewerOpen && result && (
+        <SummaryViewerModal
+          title={`Summary of ${result.article_count} article${result.article_count === 1 ? '' : 's'}`}
+          content={result.summary}
+          themes={result.key_themes}
+          onClose={() => setViewerOpen(false)}
+        />
       )}
     </div>
   )

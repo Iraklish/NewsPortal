@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   articlesApi,
   analysisApi,
@@ -13,6 +13,7 @@ import {
 import ImpactBadge from '@/components/ImpactBadge'
 import MessageContent from '@/components/MessageContent'
 import SummaryMarkdown from '@/components/SummaryMarkdown'
+import { applyHighlights } from '@/lib/highlight'
 import {
   RefreshCw, Search, X, ExternalLink, Loader2, Sparkles,
   Send, ChevronDown, ChevronLeft, ChevronRight, Clock, Plus, BookOpen, Globe, Maximize2, Minimize2,
@@ -111,6 +112,9 @@ export default function NewsPage() {
   const [summaryError, setSummaryError] = useState('')
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [summaryMaximized, setSummaryMaximized] = useState(false)
+  const [summarySearch, setSummarySearch] = useState('')
+  const [summaryMatchCount, setSummaryMatchCount] = useState(0)
+  const summaryContentRef = useRef<HTMLDivElement>(null)
   const { apiLanguage } = useLanguage()
   const [page, setPage] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -297,12 +301,43 @@ export default function NewsPage() {
     }
   }
 
+  // Memoize the rendered summary so typing in the find box doesn't re-render the
+  // markdown subtree (which would wipe the injected highlight <mark> nodes).
+  const summaryBody = useMemo(() => {
+    if (!summaryData) return null
+    return (
+      <>
+        <SummaryMarkdown content={summaryData.summary} />
+        {summaryData.key_themes?.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-[#1e2433]">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Key themes</p>
+            <div className="flex flex-wrap gap-1.5">
+              {summaryData.key_themes.map((t, i) => (
+                <span key={i} className="px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded text-xs text-indigo-300">
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }, [summaryData])
+
+  // Re-apply the in-summary highlight whenever the term, data, or layout changes.
+  useEffect(() => {
+    const el = summaryContentRef.current
+    if (!summaryOpen || !el) return
+    setSummaryMatchCount(applyHighlights(el, summarySearch))
+  }, [summarySearch, summaryOpen, summaryData, summaryMaximized])
+
   async function summarizeSelected() {
     if (selectedIds.size === 0) return
     setSummarizing(true)
     setSummaryError('')
     setSummaryData(null)
     setSummaryOpen(true)
+    setSummarySearch('')
     try {
       const res = await analysisApi.summarize({
         article_ids: Array.from(selectedIds),
@@ -327,6 +362,7 @@ export default function NewsPage() {
     setSummaryError('')
     setSummaryData(null)
     setSummaryOpen(true)
+    setSummarySearch('')
     try {
       const isUntagged = tag === TAG_NONE
       let filter_type: 'tag' | 'category' | 'keyword' | undefined
@@ -722,7 +758,22 @@ export default function NewsPage() {
                   Summary of {summaryData?.article_count ?? selectedIds.size} article{(summaryData?.article_count ?? selectedIds.size) === 1 ? '' : 's'}
                 </h2>
               </div>
-              <div className="flex items-center gap-1 flex-shrink-0">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {/* Quick find within the summary */}
+                <div className="relative">
+                  <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    value={summarySearch}
+                    onChange={e => setSummarySearch(e.target.value)}
+                    placeholder="Find in summary…"
+                    className="w-32 sm:w-44 bg-[#0a0f1e] border border-[#1e2433] rounded-lg pl-7 pr-12 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                  {summarySearch.trim() && (
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 tabular-nums">
+                      {summaryMatchCount}
+                    </span>
+                  )}
+                </div>
                 <button
                   onClick={() => setSummaryMaximized(m => !m)}
                   title={summaryMaximized ? 'Restore' : 'Maximize'}
@@ -740,7 +791,7 @@ export default function NewsPage() {
                 </button>
               </div>
             </div>
-            <div className={clsx('p-5 overflow-y-auto flex-1', summaryMaximized ? '' : 'max-h-[70vh]')}>
+            <div ref={summaryContentRef} className={clsx('p-5 overflow-y-auto flex-1', summaryMaximized ? '' : 'max-h-[70vh]')}>
               {summarizing && (
                 <div className="flex items-center gap-2 text-sm text-slate-400 py-8 justify-center">
                   <Loader2 size={16} className="animate-spin" />
@@ -752,23 +803,7 @@ export default function NewsPage() {
                   {summaryError}
                 </div>
               )}
-              {!summarizing && summaryData && (
-                <>
-                  <SummaryMarkdown content={summaryData.summary} />
-                  {summaryData.key_themes?.length > 0 && (
-                    <div className="mt-5 pt-4 border-t border-[#1e2433]">
-                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Key themes</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {summaryData.key_themes.map((t, i) => (
-                          <span key={i} className="px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded text-xs text-indigo-300">
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
+              {!summarizing && summaryBody}
             </div>
           </div>
         </div>
