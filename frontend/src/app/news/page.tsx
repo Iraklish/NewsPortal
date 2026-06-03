@@ -93,7 +93,7 @@ export default function NewsPage() {
   const [category, setCategory] = useState<string>('')
   const [allTags, setAllTags] = useState<string[]>([])
   const [tag, setTag] = useState<string>('')
-  const [hours, setHours] = useState<number>(24)
+  const [hours, setHours] = useState<number>(1)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -110,6 +110,7 @@ export default function NewsPage() {
   const [summaryData, setSummaryData] = useState<SummaryResponse | null>(null)
   const [summaryError, setSummaryError] = useState('')
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [summaryMaximized, setSummaryMaximized] = useState(false)
   const { apiLanguage } = useLanguage()
   const [page, setPage] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -316,6 +317,34 @@ export default function NewsPage() {
     }
   }
 
+  // Summarize the currently displayed (filtered) results, mapping the active
+  // filters onto the summary endpoint. Honors category / keyword / tag + window.
+  async function summarizeDisplayed() {
+    setSummarizing(true)
+    setSummaryError('')
+    setSummaryData(null)
+    setSummaryOpen(true)
+    try {
+      let filter_type: 'tag' | 'category' | 'keyword' | undefined
+      let filter_value: string | undefined
+      if (query.trim()) { filter_type = 'keyword'; filter_value = query.trim() }
+      else if (tag) { filter_type = 'tag'; filter_value = tag }
+      else if (category) { filter_type = 'category'; filter_value = category }
+      const res = await analysisApi.summarize({
+        filter_type,
+        filter_value,
+        time_window_hours: hours,
+        max_articles: 0,
+        language: apiLanguage,
+      })
+      setSummaryData(res)
+    } catch (e: unknown) {
+      setSummaryError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSummarizing(false)
+    }
+  }
+
   function relTime(iso?: string | null): string {
     if (!iso) return 'never'
     const ms = iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso) ? new Date(iso).getTime() : new Date(iso + 'Z').getTime()
@@ -388,6 +417,15 @@ export default function NewsPage() {
           >
             <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
             {refreshing ? 'Fetching…' : 'Fetch Now'}
+          </button>
+          <button
+            onClick={summarizeDisplayed}
+            disabled={summarizing}
+            title="Summarize the currently displayed results (current filters + time window)"
+            aria-label="Summarize displayed results"
+            className="flex items-center justify-center p-2 bg-indigo-600/20 border border-indigo-500/40 hover:bg-indigo-600/40 hover:border-indigo-500/60 rounded-lg text-indigo-300 hover:text-white transition-colors disabled:opacity-50"
+          >
+            {summarizing ? <Loader2 size={16} className="animate-spin" /> : <ScrollText size={16} />}
           </button>
         </div>
       </div>
@@ -646,29 +684,47 @@ export default function NewsPage() {
 
       {summaryOpen && (
         <div
-          className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center p-4 md:p-8 overflow-y-auto"
+          className={clsx(
+            'fixed inset-0 z-[60] bg-black/70 flex items-start justify-center overflow-y-auto',
+            summaryMaximized ? 'p-0' : 'p-4 md:p-8',
+          )}
           onClick={() => setSummaryOpen(false)}
         >
           <div
-            className="bg-[#0d1117] border border-[#1e2433] rounded-2xl w-full max-w-3xl my-auto shadow-2xl"
+            className={clsx(
+              'bg-[#0d1117] border border-[#1e2433] shadow-2xl flex flex-col',
+              summaryMaximized
+                ? 'w-full min-h-screen rounded-none'
+                : 'w-full max-w-3xl my-auto rounded-2xl',
+            )}
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-5 py-4 border-b border-[#1e2433]">
               <div className="flex items-center gap-2 min-w-0">
                 <ScrollText size={16} className="text-indigo-400 flex-shrink-0" />
                 <h2 className="text-sm font-bold text-white truncate">
-                  Summary of {summaryData?.article_count ?? selectedIds.size} selected article{(summaryData?.article_count ?? selectedIds.size) === 1 ? '' : 's'}
+                  Summary of {summaryData?.article_count ?? selectedIds.size} article{(summaryData?.article_count ?? selectedIds.size) === 1 ? '' : 's'}
                 </h2>
               </div>
-              <button
-                onClick={() => setSummaryOpen(false)}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors flex-shrink-0"
-                aria-label="Close"
-              >
-                <X size={16} />
-              </button>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  onClick={() => setSummaryMaximized(m => !m)}
+                  title={summaryMaximized ? 'Restore' : 'Maximize'}
+                  aria-label={summaryMaximized ? 'Restore' : 'Maximize'}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  {summaryMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+                <button
+                  onClick={() => setSummaryOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label="Close"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
-            <div className="p-5 max-h-[70vh] overflow-y-auto">
+            <div className={clsx('p-5 overflow-y-auto flex-1', summaryMaximized ? '' : 'max-h-[70vh]')}>
               {summarizing && (
                 <div className="flex items-center gap-2 text-sm text-slate-400 py-8 justify-center">
                   <Loader2 size={16} className="animate-spin" />
