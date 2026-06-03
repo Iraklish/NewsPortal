@@ -296,6 +296,7 @@ class TelegramSourceOut(BaseModel):
     last_fetched_at: Optional[datetime] = None
     last_status: Optional[str] = None
     last_error: Optional[str] = None
+    message_count: int = 0   # number of stored messages (articles) for this channel
 
     class Config:
         from_attributes = True

@@ -856,6 +856,7 @@ export interface TelegramSource {
   last_fetched_at?: string
   last_status?: string
   last_error?: string
+  message_count: number
 }
 
 export interface TelegramUnreadChannel {

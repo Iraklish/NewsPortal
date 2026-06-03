@@ -582,7 +582,8 @@ export default function TelegramPage() {
                     {src.name && <span className="text-slate-600 font-mono text-[10px] ml-2">{src.channel_id}</span>}
                   </p>
                   <p className="text-[10px] text-slate-600">
-                    Lookback {src.lookback_hours}h · Last: {fmt(src.last_fetched_at)}
+                    <span className="text-slate-400 font-medium">{src.message_count.toLocaleString()}</span> msg
+                    {' · '}Lookback {src.lookback_hours}h · Last: {fmt(src.last_fetched_at)}
                     {src.last_error && <span className="text-red-400 ml-2">{src.last_error.slice(0, 60)}</span>}
                   </p>
                 </div>

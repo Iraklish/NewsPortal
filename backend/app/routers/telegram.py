@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from sqlalchemy import text
+
 from ..database import get_db
 from ..models import TelegramSource
 from ..schemas import TelegramSourceCreate, TelegramSourceOut, TelegramSourceUpdate
@@ -99,9 +101,30 @@ async def list_unread(db: Session = Depends(get_db)):
 
 # ── Source CRUD ───────────────────────────────────────────────────────────────
 
+def _message_counts(db: Session) -> dict[str, int]:
+    """Count stored messages per channel.
+
+    Telegram messages are stored as Article rows with a synthetic URL of the
+    form ``telegram://<channel_id>/<msg_id>``. We extract <channel_id> (the text
+    after the 11-char 'telegram://' prefix, up to the next '/') and group-count.
+    """
+    rows = db.execute(text(
+        "SELECT substr(url, 12, instr(substr(url, 12), '/') - 1) AS chan, COUNT(*) AS c "
+        "FROM articles WHERE url LIKE 'telegram://%' GROUP BY chan"
+    )).all()
+    return {r[0]: r[1] for r in rows if r[0]}
+
+
 @router.get("", response_model=List[TelegramSourceOut])
 def list_sources(db: Session = Depends(get_db)):
-    return db.query(TelegramSource).order_by(TelegramSource.id).all()
+    sources = db.query(TelegramSource).order_by(TelegramSource.id).all()
+    counts = _message_counts(db)
+    out: List[TelegramSourceOut] = []
+    for s in sources:
+        item = TelegramSourceOut.model_validate(s)
+        item.message_count = counts.get(s.channel_id, 0)
+        out.append(item)
+    return out
 
 
 @router.post("", response_model=TelegramSourceOut, status_code=201)
@@ -137,7 +160,9 @@ def update_source(source_id: int, body: TelegramSourceUpdate, db: Session = Depe
             setattr(src, field, val)
     db.commit()
     db.refresh(src)
-    return src
+    item = TelegramSourceOut.model_validate(src)
+    item.message_count = _message_counts(db).get(src.channel_id, 0)
+    return item
 
 
 @router.delete("/{source_id}")
