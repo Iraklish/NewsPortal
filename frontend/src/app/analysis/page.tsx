@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { analysisApi, articlesApi, type DirectedReport } from '@/lib/api'
+import { analysisApi, articlesApi, type DirectedReport, type DirectedReportListItem } from '@/lib/api'
 import ImpactBadge from '@/components/ImpactBadge'
 import { useLanguage } from '@/lib/language'
 import {
@@ -51,8 +51,9 @@ export default function AnalysisPage() {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const [current, setCurrent] = useState<DirectedReport | null>(null)
-  const [reports, setReports] = useState<DirectedReport[]>([])
+  const [reports, setReports] = useState<DirectedReportListItem[]>([])
   const [poppedReport, setPoppedReport] = useState<DirectedReport | null>(null)
+  const [poppingId, setPoppingId] = useState<number | null>(null)
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [previewCount, setPreviewCount] = useState<number | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -128,8 +129,23 @@ export default function AnalysisPage() {
     try {
       await analysisApi.deleteReport(id)
       if (current?.id === id) setCurrent(null)
+      if (poppedReport?.id === id) setPoppedReport(null)
       loadHistory()
     } catch {}
+  }
+
+  // History rows are lightweight — fetch the full report only when opening one.
+  async function openReport(id: number) {
+    setPoppingId(id)
+    try {
+      const full = await analysisApi.getReport(id)
+      setPoppedReport(full)
+    } catch {
+      // ignore — likely deleted; refresh the list
+      loadHistory()
+    } finally {
+      setPoppingId(null)
+    }
   }
 
   return (
@@ -310,9 +326,10 @@ export default function AnalysisPage() {
             {reports.map(r => (
               <button
                 key={r.id}
-                onClick={() => setPoppedReport(r)}
+                onClick={() => openReport(r.id)}
+                disabled={poppingId !== null}
                 className={clsx(
-                  'w-full text-left bg-[#0d1117] border rounded-xl p-3 transition-colors flex items-center gap-3',
+                  'w-full text-left bg-[#0d1117] border rounded-xl p-3 transition-colors flex items-center gap-3 disabled:opacity-60',
                   poppedReport?.id === r.id
                     ? 'border-indigo-500/50 bg-indigo-500/5'
                     : 'border-[#1e2433] hover:border-[#2d3148]'
@@ -321,14 +338,16 @@ export default function AnalysisPage() {
                 {r.impact_type && <ImpactBadge type={r.impact_type} />}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-white font-medium truncate">{r.focus}</p>
-                  <p className="text-xs text-slate-500 truncate">{r.headline || r.executive_summary?.slice(0, 120)}</p>
+                  <p className="text-xs text-slate-500 truncate">{r.headline}</p>
                 </div>
                 <div className="text-[10px] text-slate-600 flex items-center gap-3 flex-shrink-0">
                   <span className="flex items-center gap-1"><Database size={10} />{r.db_article_count}</span>
                   <span className="flex items-center gap-1"><Globe size={10} />{r.web_result_count}</span>
                   <span>{fmt(r.created_at)}</span>
                 </div>
-                <ChevronRight size={14} className="text-slate-600 flex-shrink-0" />
+                {poppingId === r.id
+                  ? <Loader2 size={14} className="text-indigo-400 animate-spin flex-shrink-0" />
+                  : <ChevronRight size={14} className="text-slate-600 flex-shrink-0" />}
               </button>
             ))}
           </div>

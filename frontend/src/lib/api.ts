@@ -201,6 +201,16 @@ export interface ChatResponse {
   suggested_web_query?: string
 }
 
+export interface DirectedReportListItem {
+  id: number
+  focus: string
+  created_at?: string
+  headline?: string
+  impact_type?: ImpactType
+  db_article_count: number
+  web_result_count: number
+}
+
 export interface DirectedReport {
   id: number
   focus: string
@@ -637,7 +647,7 @@ export const analysisApi = {
   },
 
   listReports() {
-    return request<DirectedReport[]>('/analysis/reports')
+    return request<DirectedReportListItem[]>('/analysis/reports')
   },
 
   getReport(id: number) {

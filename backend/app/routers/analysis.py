@@ -17,6 +17,7 @@ from ..schemas import (
     ArticleAskRequest,
     ChatRequest,
     DirectedAnalysisRequest,
+    DirectedReportListItem,
     DirectedReportOut,
     DirectedReportRequest,
     ReportAskRequest,
@@ -76,19 +77,54 @@ class SummaryAskRequest(BaseModel):
 # NOTE: fixed-path routes must be declared BEFORE /{analysis_id} so that
 # "reports" doesn't get parsed as an int.
 
-@router.get("/reports", response_model=list[DirectedReportOut])
-def list_reports(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(30, ge=1, le=100),
-    db: Session = Depends(get_db),
-):
-    return (
+_REPORT_HISTORY_LIMIT = 10
+
+
+def _report_description(r: DirectedReport) -> str | None:
+    if r.headline:
+        return r.headline
+    if r.executive_summary:
+        return r.executive_summary[:140] + ("…" if len(r.executive_summary) > 140 else "")
+    return None
+
+
+@router.get("/reports", response_model=list[DirectedReportListItem])
+def list_reports(db: Session = Depends(get_db)):
+    """Return the latest reports as lightweight title/description rows.
+
+    Keeps only the most recent _REPORT_HISTORY_LIMIT reports and permanently
+    deletes the rest, so history stays small and nothing heavy is preloaded.
+    """
+    ids = [
+        rid for (rid,) in db.query(DirectedReport.id)
+        .order_by(DirectedReport.created_at.desc(), DirectedReport.id.desc())
+        .all()
+    ]
+    keep_ids = ids[:_REPORT_HISTORY_LIMIT]
+    extra_ids = ids[_REPORT_HISTORY_LIMIT:]
+    if extra_ids:
+        db.query(DirectedReport).filter(DirectedReport.id.in_(extra_ids)).delete(synchronize_session=False)
+        db.commit()
+        logger.info("[reports] pruned %d old report(s), kept latest %d", len(extra_ids), len(keep_ids))
+
+    rows = (
         db.query(DirectedReport)
-        .order_by(DirectedReport.created_at.desc())
-        .offset(skip)
-        .limit(limit)
+        .filter(DirectedReport.id.in_(keep_ids))
+        .order_by(DirectedReport.created_at.desc(), DirectedReport.id.desc())
         .all()
     )
+    return [
+        DirectedReportListItem(
+            id=r.id,
+            focus=r.focus,
+            created_at=r.created_at,
+            headline=_report_description(r),
+            impact_type=r.impact_type,
+            db_article_count=r.db_article_count,
+            web_result_count=r.web_result_count,
+        )
+        for r in rows
+    ]
 
 
 @router.get("/reports/{report_id}", response_model=DirectedReportOut)

@@ -385,6 +385,21 @@ class DirectedReportOut(BaseModel):
         from_attributes = True
 
 
+class DirectedReportListItem(BaseModel):
+    """Lightweight report row for the history list — title/description only.
+
+    Omits the heavy body fields (key developments, impacts, references, …) so the
+    history doesn't preload full reports; the full report is fetched on demand.
+    """
+    id: int
+    focus: str
+    created_at: Optional[datetime] = None
+    headline: Optional[str] = None
+    impact_type: Optional[str] = None
+    db_article_count: int = 0
+    web_result_count: int = 0
+
+
 # ── Search ────────────────────────────────────────────────────────────────────
 
 class GoogleSearchResult(BaseModel):
