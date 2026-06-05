@@ -187,6 +187,7 @@ async def _run_cycle() -> None:
         db.commit()
 
         # Fetch from RSS/web sources and Telegram channels.
+        # WhatsApp is intentionally NOT auto-fetched — it is manual-only.
         new_ids = await fetch_all_sources(db)
         tg_ids = await fetch_all_telegram_sources(db)
         new_ids = new_ids + tg_ids

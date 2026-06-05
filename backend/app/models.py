@@ -145,6 +145,20 @@ class TelegramSource(Base):
     last_error = Column(Text)
 
 
+class WhatsAppSource(Base):
+    __tablename__ = "whatsapp_sources"
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(String(128), unique=True, nullable=False, index=True)   # serialized chat id from the bridge
+    name = Column(String(256))
+    is_group = Column(Boolean, default=False, nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    lookback_hours = Column(Integer, default=24, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+    last_fetched_at = Column(DateTime)
+    last_status = Column(String(32))   # ok | empty | error
+    last_error = Column(Text)
+
+
 class RssSource(Base):
     __tablename__ = "rss_sources"
     id = Column(Integer, primary_key=True, index=True)

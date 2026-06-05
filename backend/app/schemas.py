@@ -321,6 +321,39 @@ class TelegramSourceUpdate(BaseModel):
     lookback_hours: Optional[int] = None
 
 
+# ── WhatsAppSource ────────────────────────────────────────────────────────────
+
+class WhatsAppSourceOut(BaseModel):
+    id: int
+    chat_id: str
+    name: Optional[str] = None
+    is_group: bool = False
+    enabled: bool
+    lookback_hours: int
+    created_at: Optional[datetime] = None
+    last_fetched_at: Optional[datetime] = None
+    last_status: Optional[str] = None
+    last_error: Optional[str] = None
+    message_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class WhatsAppSourceCreate(BaseModel):
+    chat_id: str
+    name: Optional[str] = None
+    is_group: bool = False
+    enabled: bool = True
+    lookback_hours: int = 24
+
+
+class WhatsAppSourceUpdate(BaseModel):
+    name: Optional[str] = None
+    enabled: Optional[bool] = None
+    lookback_hours: Optional[int] = None
+
+
 class MindMapOut(BaseModel):
     id: int
     subject: str

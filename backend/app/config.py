@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     log_retention_hours: int = 24  # how many hourly log files to keep
     log_level: str = "INFO"
 
+    # WhatsApp bridge (Node sidecar — see whatsapp-bridge/)
+    whatsapp_bridge_url: str = "http://127.0.0.1:8765"
+    whatsapp_bridge_token: str = ""
+
     # Authentication
     auth_token_expire_minutes: int = 60 * 24 * 7   # access-token lifetime (7 days)
     initial_admin_username: str = "admin"          # seeded on first run if no users exist

@@ -978,6 +978,80 @@ export const telegramApi = {
   },
 }
 
+// ─── WhatsApp ─────────────────────────────────────────────────────────────────
+
+export interface WhatsAppStatus {
+  ready: boolean
+  authenticated: boolean
+  connecting?: boolean
+  qr?: string | null
+  error?: string
+}
+
+export interface WhatsAppChat {
+  id: string
+  name?: string
+  isGroup: boolean
+  unreadCount: number
+  timestamp?: number | null
+  already_added: boolean
+}
+
+export interface WhatsAppSource {
+  id: number
+  chat_id: string
+  name?: string
+  is_group: boolean
+  enabled: boolean
+  lookback_hours: number
+  created_at?: string
+  last_fetched_at?: string
+  last_status?: string
+  last_error?: string
+  message_count: number
+}
+
+export const whatsappApi = {
+  authStatus() {
+    return request<WhatsAppStatus>('/whatsapp/auth/status')
+  },
+  connect() {
+    return request<{ ok: boolean; connecting?: boolean; ready?: boolean }>('/whatsapp/auth/connect', { method: 'POST' })
+  },
+  disconnect() {
+    return request<{ ok: boolean }>('/whatsapp/auth/disconnect', { method: 'POST' })
+  },
+  listChats() {
+    return request<WhatsAppChat[]>('/whatsapp/chats')
+  },
+  list() {
+    return request<WhatsAppSource[]>('/whatsapp')
+  },
+  create(body: { chat_id: string; name?: string; is_group?: boolean; lookback_hours?: number; enabled?: boolean }) {
+    return request<WhatsAppSource>('/whatsapp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+  update(id: number, patch: { name?: string; enabled?: boolean; lookback_hours?: number }) {
+    return request<WhatsAppSource>(`/whatsapp/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+  },
+  remove(id: number) {
+    return request<{ deleted: boolean; id: number }>(`/whatsapp/${id}`, { method: 'DELETE' })
+  },
+  fetchAll() {
+    return request<{ sources_fetched: number; new_articles: number }>('/whatsapp/fetch', { method: 'POST' })
+  },
+  fetchOne(id: number) {
+    return request<{ new_articles: number; ids: number[] }>(`/whatsapp/${id}/fetch`, { method: 'POST' })
+  },
+}
+
 // ─── Stocks ───────────────────────────────────────────────────────────────────
 
 export const stocksApi = {
