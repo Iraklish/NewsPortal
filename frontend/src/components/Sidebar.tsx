@@ -10,10 +10,10 @@ import { useAuth } from '@/lib/auth'
 const nav = [
   { href: '/news', label: 'News', icon: Newspaper },
   { href: '/summary', label: 'Summary', icon: ScrollText },
-  { href: '/analysis', label: 'Analysis & Prognosis', icon: BarChart2 },
   { href: '/stocks', label: 'Stock Reviews', icon: LineChart },
   { href: '/search', label: 'Web Search', icon: Search },
   { href: '/mindmap', label: 'MindMap', icon: Network },
+  { href: '/analysis', label: 'Analysis & Prognosis', icon: BarChart2 },
   { href: '/telegram', label: 'Telegram', icon: Send },
   { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
   { href: '/logs', label: 'Logs', icon: FileText },
