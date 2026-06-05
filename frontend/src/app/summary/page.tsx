@@ -3,9 +3,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   ScrollText, Tag, Layers, Search, Sparkles, RefreshCw,
   ChevronRight, Clock, FileText, ExternalLink,
-  ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter, Maximize2,
+  ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter, Maximize2, Plus, X,
 } from 'lucide-react'
-import { analysisApi, articlesApi, SummaryResponse } from '@/lib/api'
+import { analysisApi, articlesApi, settingsApi, SummaryResponse } from '@/lib/api'
 import SummaryMarkdown from '@/components/SummaryMarkdown'
 import MessageContent from '@/components/MessageContent'
 import SummaryViewerModal from '@/components/SummaryViewerModal'
@@ -98,8 +98,8 @@ function AccordionToggle({
 
 export default function SummaryPage() {
   // primary controls
-  const [timeWindow, setTimeWindow]   = useState(24)
-  const [maxArticles, setMaxArticles] = useState(50)
+  const [timeWindow, setTimeWindow]   = useState(6)
+  const [maxArticles, setMaxArticles] = useState(0)   // 0 = All
   const { language }                  = useLanguage()
 
   // optional filter (collapsed by default)
@@ -110,6 +110,13 @@ export default function SummaryPage() {
   // optional custom prompt (collapsed by default)
   const [showPrompt, setShowPrompt]   = useState(false)
   const [customPrompt, setCustomPrompt] = useState('')
+
+  // predefined editable extra-instruction presets (collapsed by default)
+  const [showPresets, setShowPresets] = useState(false)
+  const [presets, setPresets]         = useState<string[]>([])
+  const [editPresets, setEditPresets] = useState(false)
+  const [newPreset, setNewPreset]     = useState('')
+  const [savingPresets, setSavingPresets] = useState(false)
 
   // generation
   const [loading, setLoading]         = useState(false)
@@ -130,7 +137,44 @@ export default function SummaryPage() {
   useEffect(() => {
     articlesApi.categories().then(c => setCategories(c.sort())).catch(() => {})
     articlesApi.tags().then(t => setTags(t.sort())).catch(() => {})
+    settingsApi.getSummaryPresets().then(r => setPresets(r.presets)).catch(() => {})
   }, [])
+
+  async function persistPresets(next: string[]) {
+    const prev = presets
+    setPresets(next)
+    setSavingPresets(true)
+    try {
+      const r = await settingsApi.setSummaryPresets(next)
+      setPresets(r.presets)
+    } catch {
+      setPresets(prev)
+    } finally {
+      setSavingPresets(false)
+    }
+  }
+
+  function applyPreset(p: string) {
+    setShowPrompt(true)
+    setCustomPrompt(cur => {
+      const t = cur.trim()
+      return t ? `${t}\n${p}` : p
+    })
+  }
+
+  function addPreset() {
+    const t = newPreset.trim()
+    if (!t || presets.length >= 20 || presets.some(p => p.toLowerCase() === t.toLowerCase())) {
+      setNewPreset('')
+      return
+    }
+    persistPresets([...presets, t])
+    setNewPreset('')
+  }
+
+  function removePreset(p: string) {
+    persistPresets(presets.filter(x => x !== p))
+  }
 
   useEffect(() => { setFilterValue('') }, [filterType])
 
@@ -311,6 +355,70 @@ export default function SummaryPage() {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Predefined instructions (collapsed by default, editable) ── */}
+        <div className="space-y-3">
+          <AccordionToggle
+            open={showPresets}
+            onToggle={() => setShowPresets(v => !v)}
+            icon={Sparkles}
+            label="Predefined instructions"
+            badge={presets.length ? String(presets.length) : undefined}
+          />
+
+          {showPresets && (
+            <div className="space-y-2 pl-1">
+              <p className="text-[10px] text-slate-600">
+                Click to add to Extra instructions. Edit the list below (up to 20).
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {presets.map(p => (
+                  <span
+                    key={p}
+                    className="flex items-center gap-1 bg-[#161b22] border border-[#1e2433] rounded-full pl-3 pr-1.5 py-1 text-xs text-slate-300"
+                  >
+                    <button onClick={() => applyPreset(p)} className="hover:text-indigo-300 transition-colors" title="Add to Extra instructions">
+                      {p}
+                    </button>
+                    {editPresets && (
+                      <button onClick={() => removePreset(p)} disabled={savingPresets} title="Remove" className="text-slate-600 hover:text-red-400 transition-colors disabled:opacity-40">
+                        <X size={11} />
+                      </button>
+                    )}
+                  </span>
+                ))}
+                {presets.length === 0 && <span className="text-xs text-slate-600 italic">No presets — add one below.</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                {editPresets && (
+                  <>
+                    <input
+                      value={newPreset}
+                      onChange={e => setNewPreset(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPreset() } }}
+                      placeholder="New instruction…"
+                      maxLength={200}
+                      className="flex-1 bg-[#161b22] border border-[#1e2433] rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/50"
+                    />
+                    <button
+                      onClick={addPreset}
+                      disabled={!newPreset.trim() || presets.length >= 20 || savingPresets}
+                      className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 rounded-lg text-xs disabled:opacity-40 transition-colors"
+                    >
+                      {savingPresets ? <RefreshCw size={11} className="animate-spin" /> : <Plus size={12} />} Add
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => setEditPresets(v => !v)}
+                  className="ml-auto text-[11px] text-slate-500 hover:text-white transition-colors"
+                >
+                  {editPresets ? 'Done' : 'Edit'}
+                </button>
+              </div>
             </div>
           )}
         </div>

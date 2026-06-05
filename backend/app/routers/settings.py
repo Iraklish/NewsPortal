@@ -17,6 +17,7 @@ from ..config import (
     DEFAULT_ENTERTAINMENT_KEYWORDS_STR,
     DEFAULT_QUICK_TICKERS,
     DEFAULT_STOCK_SYSTEM_PROMPT,
+    DEFAULT_SUMMARY_PRESETS,
     DEFAULT_SUMMARY_SYSTEM_PROMPT,
     settings,
 )
@@ -327,6 +328,39 @@ def set_quick_tickers(body: QuickTickersIn, db: Session = Depends(get_db)):
     _set_db(db, "quick_tickers", json.dumps(cleaned))
     db.commit()
     return {"tickers": cleaned}
+
+
+class SummaryPresetsIn(BaseModel):
+    presets: List[str]
+
+
+@router.get("/summary-presets")
+def get_summary_presets(db: Session = Depends(get_db)):
+    """Return the predefined 'extra instructions' presets for the Summary page."""
+    raw = _db_get(db, "summary_presets")
+    if raw is None:
+        return {"presets": DEFAULT_SUMMARY_PRESETS}
+    try:
+        presets = json.loads(raw)
+        return {"presets": presets if isinstance(presets, list) else DEFAULT_SUMMARY_PRESETS}
+    except Exception:
+        return {"presets": DEFAULT_SUMMARY_PRESETS}
+
+
+@router.put("/summary-presets")
+def set_summary_presets(body: SummaryPresetsIn, db: Session = Depends(get_db)):
+    """Save the Summary-page extra-instruction presets (trim, de-dupe, cap at 20)."""
+    cleaned: List[str] = []
+    seen: set[str] = set()
+    for p in body.presets:
+        t = (p or "").strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            cleaned.append(t)
+    cleaned = cleaned[:20]
+    _set_db(db, "summary_presets", json.dumps(cleaned))
+    db.commit()
+    return {"presets": cleaned}
 
 
 _RESETTABLE_KEYS = {

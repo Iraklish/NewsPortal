@@ -96,6 +96,16 @@ DEFAULT_ARTICLE_SUMMARIZE_PROMPT = (
 )
 
 
+# Predefined "extra instructions" presets for the Article Summary page. Editable
+# (persisted in AppSettings under "summary_presets"); capped at 20.
+DEFAULT_SUMMARY_PRESETS: list[str] = [
+    "Focus on Marvel / entertainment news",
+    "Group results by region",
+    "Respond in Hebrew",
+    "Highlight any market-moving events",
+]
+
+
 # Quick-pick tickers shown as chips on the Stock Reviews page. User-editable
 # (persisted in AppSettings under "quick_tickers"); this is the seed default.
 DEFAULT_QUICK_TICKERS: list[str] = [

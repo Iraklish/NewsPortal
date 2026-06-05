@@ -733,6 +733,18 @@ export const settingsApi = {
     return request<{ tickers: string[] }>('/settings/quick-tickers')
   },
 
+  getSummaryPresets() {
+    return request<{ presets: string[] }>('/settings/summary-presets')
+  },
+
+  setSummaryPresets(presets: string[]) {
+    return request<{ presets: string[] }>('/settings/summary-presets', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ presets }),
+    })
+  },
+
   setQuickTickers(tickers: string[]) {
     return request<{ tickers: string[] }>('/settings/quick-tickers', {
       method: 'PUT',
