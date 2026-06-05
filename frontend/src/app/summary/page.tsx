@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   ScrollText, Tag, Layers, Search, Sparkles, RefreshCw,
   ChevronRight, Clock, FileText, ExternalLink,
-  ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter, Maximize2, Plus, X,
+  ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter, Maximize2, Minimize2, Plus, X,
 } from 'lucide-react'
 import { analysisApi, articlesApi, settingsApi, SummaryResponse } from '@/lib/api'
 import SummaryMarkdown from '@/components/SummaryMarkdown'
@@ -132,6 +132,8 @@ export default function SummaryPage() {
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([])
   const [chatInput, setChatInput]       = useState('')
   const [chatLoading, setChatLoading]   = useState(false)
+  const [chatOpen, setChatOpen]         = useState(false)   // collapsed by default
+  const [chatMaximized, setChatMaximized] = useState(false)
   const chatEndRef                      = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -181,6 +183,13 @@ export default function SummaryPage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatMessages, chatLoading])
+
+  useEffect(() => {
+    if (!chatMaximized) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setChatMaximized(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [chatMaximized])
 
   const suggestions: string[] =
     filterType === 'category' ? categories :
@@ -530,18 +539,47 @@ export default function SummaryPage() {
             <SummaryMarkdown content={result.summary} />
           </div>
 
-          {/* ── Follow-up Chat ─────────────────────────────────────────── */}
-          <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl overflow-hidden">
+          {/* ── Follow-up Chat (collapsible / maximizable) ─────────────── */}
+          {chatMaximized && <div className="fixed inset-0 z-[60] bg-black/70" onClick={() => setChatMaximized(false)} />}
+          <div className={`bg-[#0d1117] border border-[#1e2433] overflow-hidden flex flex-col ${chatMaximized ? 'fixed inset-0 sm:inset-6 z-[60] rounded-none sm:rounded-2xl shadow-2xl' : 'rounded-2xl'}`}>
             <div className="flex items-center gap-2 px-5 py-3.5 border-b border-[#1e2433]">
-              <MessageSquare size={14} className="text-indigo-400" />
-              <h2 className="text-xs text-slate-300 font-semibold uppercase tracking-wider">
-                Follow-up Chat
-              </h2>
-              <span className="text-[10px] text-slate-600 ml-1">drill down into any topic</span>
+              <button
+                onClick={() => setChatOpen(v => !v)}
+                className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                title={chatOpen ? 'Collapse' : 'Expand'}
+              >
+                {(chatOpen || chatMaximized) ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />}
+                <MessageSquare size={14} className="text-indigo-400" />
+                <h2 className="text-xs text-slate-300 font-semibold uppercase tracking-wider">Follow-up Chat</h2>
+                {chatMessages.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded-full leading-none">{chatMessages.length}</span>
+                )}
+                <span className="text-[10px] text-slate-600 ml-1 hidden sm:inline">drill down into any topic</span>
+              </button>
+              <button
+                onClick={() => { setChatMaximized(v => !v); setChatOpen(true) }}
+                title={chatMaximized ? 'Restore' : 'Pop out / enlarge'}
+                aria-label={chatMaximized ? 'Restore chat' : 'Pop out chat'}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors flex-shrink-0"
+              >
+                {chatMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              </button>
+              {chatMaximized && (
+                <button
+                  onClick={() => setChatMaximized(false)}
+                  title="Close"
+                  aria-label="Close chat"
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors flex-shrink-0"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
 
+            {(chatOpen || chatMaximized) && (
+            <>
             {/* Messages */}
-            <div className="px-5 py-4 space-y-4 max-h-[480px] overflow-y-auto">
+            <div className={`px-5 py-4 space-y-4 overflow-y-auto ${chatMaximized ? 'flex-1' : 'max-h-[480px]'}`}>
               {chatMessages.length === 0 && (
                 <div className="text-center py-6">
                   <MessageSquare size={28} className="text-slate-700 mx-auto mb-2" />
@@ -645,6 +683,8 @@ export default function SummaryPage() {
                 </button>
               </div>
             </div>
+            </>
+            )}
           </div>
 
           {/* Key themes */}
