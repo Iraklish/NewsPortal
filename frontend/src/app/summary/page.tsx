@@ -530,68 +530,6 @@ export default function SummaryPage() {
             <SummaryMarkdown content={result.summary} />
           </div>
 
-          {/* Key themes */}
-          {result.key_themes.length > 0 && (
-            <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5">
-              <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-3">Key Themes</h2>
-              <div className="flex flex-wrap gap-2">
-                {result.key_themes.map((theme, i) => (
-                  <span
-                    key={i}
-                    className="px-3 py-1.5 bg-indigo-600/15 text-indigo-300 border border-indigo-500/20
-                               rounded-full text-xs font-medium"
-                  >
-                    {theme}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Source articles */}
-          {result.sources.length > 0 && (
-            <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5">
-              <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-3">
-                Source Articles ({result.sources.length})
-              </h2>
-              <div>
-                {result.sources.map((s, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-3 py-2.5 border-b border-[#1e2433] last:border-0"
-                  >
-                    <ChevronRight size={12} className="text-slate-600 mt-0.5 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      {s.url && s.url.startsWith('http') ? (
-                        <a
-                          href={s.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sm text-white hover:text-indigo-400 transition-colors flex items-center gap-1.5 group"
-                        >
-                          <span className="line-clamp-1">{s.title || s.url}</span>
-                          <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
-                        </a>
-                      ) : (
-                        <span className="text-sm text-white line-clamp-1">{s.title || s.url}</span>
-                      )}
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {s.source && <span className="text-xs text-slate-500">{s.source}</span>}
-                        {s.published_at && (
-                          <span className="text-xs text-slate-600">
-                            {new Date(s.published_at).toLocaleDateString(undefined, {
-                              month: 'short', day: 'numeric', year: 'numeric',
-                            })}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* ── Follow-up Chat ─────────────────────────────────────────── */}
           <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 px-5 py-3.5 border-b border-[#1e2433]">
@@ -708,6 +646,68 @@ export default function SummaryPage() {
               </div>
             </div>
           </div>
+
+          {/* Key themes */}
+          {result.key_themes.length > 0 && (
+            <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5">
+              <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-3">Key Themes</h2>
+              <div className="flex flex-wrap gap-2">
+                {result.key_themes.map((theme, i) => (
+                  <span
+                    key={i}
+                    className="px-3 py-1.5 bg-indigo-600/15 text-indigo-300 border border-indigo-500/20
+                               rounded-full text-xs font-medium"
+                  >
+                    {theme}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Source articles */}
+          {result.sources.length > 0 && (
+            <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5">
+              <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-3">
+                Source Articles ({result.sources.length})
+              </h2>
+              <div>
+                {result.sources.map((s, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-3 py-2.5 border-b border-[#1e2433] last:border-0"
+                  >
+                    <ChevronRight size={12} className="text-slate-600 mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      {s.url && s.url.startsWith('http') ? (
+                        <a
+                          href={s.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-white hover:text-indigo-400 transition-colors flex items-center gap-1.5 group"
+                        >
+                          <span className="line-clamp-1">{s.title || s.url}</span>
+                          <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
+                        </a>
+                      ) : (
+                        <span className="text-sm text-white line-clamp-1">{s.title || s.url}</span>
+                      )}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {s.source && <span className="text-xs text-slate-500">{s.source}</span>}
+                        {s.published_at && (
+                          <span className="text-xs text-slate-600">
+                            {new Date(s.published_at).toLocaleDateString(undefined, {
+                              month: 'short', day: 'numeric', year: 'numeric',
+                            })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
         </div>
       )}
