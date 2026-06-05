@@ -208,6 +208,7 @@ async def fetch_telegram_channel(
     from telethon.tl.functions.messages import GetHistoryRequest
 
     new_ids: list[int] = []
+    media_count = 0
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=source.lookback_hours)
 
     async with _get_lock():
@@ -263,6 +264,7 @@ async def fetch_telegram_channel(
                             img = await _download_post_media(client, msg, source.channel_id)
                             if img:
                                 existing.image_url = img
+                                media_count += 1
                         continue   # already stored
 
                     # First non-empty line → title (≤200 chars). Media-only posts
@@ -272,6 +274,8 @@ async def fetch_telegram_channel(
 
                     # Download a displayable image for any media the post carries.
                     image_url = await _download_post_media(client, msg, source.channel_id)
+                    if image_url:
+                        media_count += 1
 
                     article = Article(
                         url=u,
@@ -326,6 +330,11 @@ async def fetch_telegram_channel(
     except Exception:
         db.rollback()
 
+    if new_ids or media_count:
+        logger.info(
+            "[telegram] %s: %d new, %d media downloaded",
+            source.name or source.channel_id, len(new_ids), media_count,
+        )
     return new_ids
 
 
