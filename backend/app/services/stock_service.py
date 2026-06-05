@@ -129,17 +129,42 @@ async def search_ticker(query: str) -> list:
     return await loop.run_in_executor(None, lambda: _sync_search_ticker(query))
 
 
+_LANG_INSTRUCTIONS = {
+    "Hebrew": "Hebrew (עברית)",
+    "Russian": "Russian (Русский)",
+    "Georgian": "Georgian (ქართული)",
+    "French": "French (Français)",
+    "German": "German (Deutsch)",
+    "Arabic": "Arabic (العربية)",
+    "Spanish": "Spanish (Español)",
+}
+
+
+def _language_clause(language: str) -> str:
+    lang = (language or "").strip()
+    if not lang or lang.lower() == "english":
+        return ""
+    name = _LANG_INSTRUCTIONS.get(lang, lang)
+    return (
+        f" Write all human-readable text field VALUES (summary, technical_summary, "
+        f"news_impact, prognosis_short, prognosis_long, catalysts) in {name}. "
+        f"Keep all JSON KEYS and the enum values for impact_type and risk_level in English."
+    )
+
+
 async def analyze_stock(
     ticker: str,
     db: Session,
     include_web: bool = False,
     include_web_search: bool = False,
+    language: str = "",
 ) -> dict:
     """Fetch quote + price history + related news, run AI analysis, store in DB.
 
     include_web        → use the provider's native web grounding (Gemini/Anthropic).
     include_web_search → run an explicit multi-engine web search and feed results in.
-    Both contribute reference links stored on the analysis record.
+    language           → write prose field values in this language (keys/enums stay English).
+    Both grounding modes contribute reference links stored on the analysis record.
     """
     ticker = ticker.upper()
 
@@ -220,7 +245,7 @@ async def analyze_stock(
             logger.warning("[stocks] web search failed for %s: %s", ticker, exc)
 
     # Build AI prompt (system prompt configurable in Settings)
-    system = _get_stock_prompt(db)
+    system = _get_stock_prompt(db) + _language_clause(language)
 
     user = f"""Analyze the following stock and return a JSON object with exactly these fields:
 

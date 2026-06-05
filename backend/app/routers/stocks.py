@@ -5,9 +5,54 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AppSettings, StockAnalysis
+from ..models import AppSettings, Article, StockAnalysis
 from ..schemas import StockAnalysisOut, StockAskRequest
 from ..services.stock_service import analyze_stock, get_history, get_quote, search_ticker
+
+
+def _with_sources(records: list[StockAnalysis], db: Session) -> list[StockAnalysisOut]:
+    """Merge each analysis's stored web/AI references with the related DB news
+    articles (resolved from related_article_ids) so the card always shows
+    references/links/sources, de-duplicated by URL."""
+    # Batch-resolve all related article ids across the given records.
+    all_ids: set[int] = set()
+    for r in records:
+        all_ids.update(r.related_article_ids or [])
+    by_id: dict[int, Article] = {}
+    if all_ids:
+        for a in db.query(Article).filter(Article.id.in_(all_ids)).all():
+            by_id[a.id] = a
+
+    out: list[StockAnalysisOut] = []
+    for r in records:
+        item = StockAnalysisOut.model_validate(r)
+        refs: list[dict] = []
+        seen: set[str] = set()
+        for ref in (r.references or []):
+            u = ref.get("url")
+            if u and u in seen:
+                continue
+            if u:
+                seen.add(u)
+            refs.append(ref)
+        for aid in (r.related_article_ids or []):
+            a = by_id.get(aid)
+            if not a or (a.url and a.url in seen):
+                continue
+            if a.url:
+                seen.add(a.url)
+            refs.append({
+                "title": a.title, "url": a.url, "source": a.source,
+                "published_at": a.published_at.isoformat() if a.published_at else None,
+                "kind": "news",
+            })
+        item.references = refs
+        out.append(item)
+    return out
+
+
+def _one_with_sources(record: StockAnalysis, db: Session) -> StockAnalysisOut:
+    return _with_sources([record], db)[0]
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -36,7 +81,7 @@ def list_stock_analyses(
             .group_by(StockAnalysis.ticker)
             .subquery()
         )
-        return (
+        records = (
             db.query(StockAnalysis)
             .join(subq, StockAnalysis.id == subq.c.max_id)
             .order_by(StockAnalysis.created_at.desc())
@@ -44,13 +89,15 @@ def list_stock_analyses(
             .limit(limit)
             .all()
         )
-    return (
-        db.query(StockAnalysis)
-        .order_by(StockAnalysis.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
+    else:
+        records = (
+            db.query(StockAnalysis)
+            .order_by(StockAnalysis.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+    return _with_sources(records, db)
 
 
 @router.get("/{ticker}/quote")
@@ -83,6 +130,7 @@ async def analyze_stock_endpoint(
     ticker: str,
     include_web: bool = Query(False, description="Use AI-native web grounding"),
     include_web_search: bool = Query(False, description="Run explicit multi-engine web search"),
+    language: str = Query("", description="Write prose fields in this language (keys/enums stay English)"),
     db: Session = Depends(get_db),
 ):
     """Run full AI analysis for a ticker and store the result."""
@@ -91,13 +139,14 @@ async def analyze_stock_endpoint(
             ticker.upper(), db,
             include_web=include_web,
             include_web_search=include_web_search,
+            language=language,
         )
     except Exception as exc:
         logger.error("Stock analysis failed for %s: %s", ticker, exc)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}")
 
     analysis = db.query(StockAnalysis).filter(StockAnalysis.id == result["id"]).first()
-    return analysis
+    return _one_with_sources(analysis, db)
 
 
 @router.get("/{ticker}/latest", response_model=StockAnalysisOut)
@@ -111,7 +160,7 @@ def get_latest_stock_analysis(ticker: str, db: Session = Depends(get_db)):
     )
     if not record:
         raise HTTPException(status_code=404, detail=f"No analysis found for {ticker}")
-    return record
+    return _one_with_sources(record, db)
 
 
 @router.post("/{ticker}/ask")

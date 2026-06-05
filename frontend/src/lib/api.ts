@@ -956,10 +956,11 @@ export const stocksApi = {
     return request<StockPricePoint[]>(`/stocks/${encodeURIComponent(ticker)}/history`)
   },
 
-  analyze(ticker: string, opts?: { include_web?: boolean; include_web_search?: boolean }) {
+  analyze(ticker: string, opts?: { include_web?: boolean; include_web_search?: boolean; language?: string }) {
     const qp = new URLSearchParams()
     if (opts?.include_web) qp.set('include_web', 'true')
     if (opts?.include_web_search) qp.set('include_web_search', 'true')
+    if (opts?.language) qp.set('language', opts.language)
     const qs = qp.toString()
     return request<StockAnalysis>(`/stocks/${encodeURIComponent(ticker)}/analyze${qs ? '?' + qs : ''}`, {
       method: 'POST',

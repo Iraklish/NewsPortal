@@ -5,6 +5,7 @@ import { stocksApi, settingsApi, type StockAnalysis } from '@/lib/api'
 import StockCard from '@/components/StockCard'
 import { Search, Loader2, TrendingUp, Plus, X, Sparkles, Globe } from 'lucide-react'
 import clsx from 'clsx'
+import { useLanguage } from '@/lib/language'
 
 export default function StocksPage() {
   const [query, setQuery] = useState('')
@@ -19,6 +20,7 @@ export default function StocksPage() {
   const [editTickers, setEditTickers] = useState(false)
   const [aiGrounding, setAiGrounding] = useState(false)
   const [webSearch, setWebSearch] = useState(false)
+  const { apiLanguage } = useLanguage()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -79,6 +81,7 @@ export default function StocksPage() {
       const res = await stocksApi.analyze(ticker.toUpperCase(), {
         include_web: aiGrounding || undefined,
         include_web_search: webSearch || undefined,
+        language: apiLanguage,
       })
       setAnalysis(res)
       const updated = await stocksApi.getAnalyses()

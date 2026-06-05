@@ -250,28 +250,40 @@ export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
         </div>
       )}
 
-      {/* References / sources */}
+      {/* References, links & sources */}
       {(analysis.references ?? []).length > 0 && (
         <div>
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-            References ({analysis.references!.length})
+            References &amp; Sources ({analysis.references!.length})
           </p>
           <div className="space-y-1.5">
-            {analysis.references!.map((ref, i) => (
-              <a
-                key={i}
-                href={ref.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-start gap-2 text-xs text-slate-400 hover:text-indigo-300 transition-colors group"
-              >
-                <ExternalLink size={11} className="mt-0.5 flex-shrink-0 opacity-60 group-hover:opacity-100" />
-                <span className="min-w-0">
-                  <span className="text-slate-300 group-hover:text-indigo-300">{ref.title || ref.url}</span>
-                  {ref.source && <span className="text-slate-600 ml-1.5">· {ref.source}</span>}
-                </span>
-              </a>
-            ))}
+            {analysis.references!.map((ref, i) => {
+              const isLink = !!ref.url && /^https?:\/\//i.test(ref.url)
+              const label = ref.title || ref.url || ref.source || 'source'
+              return isLink ? (
+                <a
+                  key={i}
+                  href={ref.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-start gap-2 text-xs text-slate-400 hover:text-indigo-300 transition-colors group"
+                >
+                  <ExternalLink size={11} className="mt-0.5 flex-shrink-0 opacity-60 group-hover:opacity-100" />
+                  <span className="min-w-0">
+                    <span className="text-slate-300 group-hover:text-indigo-300">{label}</span>
+                    {ref.source && <span className="text-slate-600 ml-1.5">· {ref.source}</span>}
+                  </span>
+                </a>
+              ) : (
+                <div key={i} className="flex items-start gap-2 text-xs text-slate-500">
+                  <span className="mt-0.5 flex-shrink-0 opacity-50">•</span>
+                  <span className="min-w-0">
+                    <span className="text-slate-400">{label}</span>
+                    {ref.source && <span className="text-slate-600 ml-1.5">· {ref.source}</span>}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
