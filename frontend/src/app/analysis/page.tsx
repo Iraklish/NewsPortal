@@ -55,8 +55,6 @@ export default function AnalysisPage() {
   const [poppedReport, setPoppedReport] = useState<DirectedReport | null>(null)
   const [poppingId, setPoppingId] = useState<number | null>(null)
   const [loadingHistory, setLoadingHistory] = useState(true)
-  const [previewCount, setPreviewCount] = useState<number | null>(null)
-  const [previewLoading, setPreviewLoading] = useState(false)
   const [trendingTopics, setTrendingTopics] = useState<string[]>([])
   const [loadingTopics, setLoadingTopics] = useState(true)
 
@@ -85,20 +83,6 @@ export default function AnalysisPage() {
 
   const combinedFocus = focus.trim()
     + (aspect.trim() ? ` — analyzed from the perspective of: ${aspect.trim()}` : '')
-
-  // Debounced preview of matching DB articles for current focus + window + category
-  useEffect(() => {
-    const f = focus.trim()
-    if (!f) { setPreviewCount(null); return }
-    setPreviewLoading(true)
-    const handle = setTimeout(() => {
-      analysisApi.previewDirected(combinedFocus, timeWindowHours, category || undefined, tag || undefined)
-        .then(r => setPreviewCount(r.db_article_count))
-        .catch(() => setPreviewCount(null))
-        .finally(() => setPreviewLoading(false))
-    }, 400)
-    return () => clearTimeout(handle)
-  }, [combinedFocus, timeWindowHours, category, tag])
 
   async function runReport() {
     if (!focus.trim()) return
@@ -263,23 +247,7 @@ export default function AnalysisPage() {
 
         <div className="flex items-center justify-between mt-4 pt-4 border-t border-[#1e2433]">
           <div className="flex items-center gap-3 text-[11px]">
-            {focus.trim() ? (
-              previewLoading ? (
-                <span className="text-slate-500 flex items-center gap-1.5">
-                  <Loader2 size={11} className="animate-spin" /> counting…
-                </span>
-              ) : previewCount != null ? (
-                <span className="flex items-center gap-1.5 text-slate-400">
-                  <Database size={11} className="text-indigo-400" />
-                  <span className="text-white font-semibold">{previewCount}</span>
-                  matching article{previewCount === 1 ? '' : 's'} in window
-                </span>
-              ) : (
-                <span className="text-slate-600">⌘/Ctrl+Enter to run</span>
-              )
-            ) : (
-              <span className="text-slate-600">⌘/Ctrl+Enter to run</span>
-            )}
+            <span className="text-slate-600">⌘/Ctrl+Enter to run</span>
           </div>
           <button
             onClick={runReport}
