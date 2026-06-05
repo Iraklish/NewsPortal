@@ -197,6 +197,20 @@ async def manual_fetch(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.post("/backfill-images")
+async def backfill_images(limit: int = 300, db: Session = Depends(get_db)):
+    """Download images for already-stored Telegram posts that have none yet."""
+    from ..services.telegram_fetcher import backfill_telegram_images, credentials_configured
+    if not credentials_configured(db):
+        raise HTTPException(status_code=400, detail="Telegram credentials not configured")
+    try:
+        updated = await backfill_telegram_images(db, limit=max(1, min(limit, 2000)))
+        return {"updated": updated}
+    except Exception as exc:
+        logger.exception("[telegram] image backfill failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.post("/{source_id}/fetch")
 async def fetch_one(source_id: int, db: Session = Depends(get_db)):
     """Trigger fetch for a single Telegram source."""

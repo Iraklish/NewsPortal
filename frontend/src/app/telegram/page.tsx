@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { telegramApi, type TelegramSource, type TelegramUnreadChannel } from '@/lib/api'
 import {
   Send, Plus, Trash2, RefreshCw, Loader2, CheckCircle2,
-  ChevronDown, ChevronUp, ShieldCheck, Inbox,
+  ChevronDown, ChevronUp, ShieldCheck, Inbox, Image as ImageIcon,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -161,6 +161,23 @@ export default function TelegramPage() {
     } catch {} finally { setFetching(false) }
   }
 
+  const [backfilling, setBackfilling] = useState(false)
+  const [backfillMsg, setBackfillMsg] = useState('')
+  async function backfillImages() {
+    setBackfilling(true)
+    setBackfillMsg('')
+    try {
+      const r = await telegramApi.backfillImages()
+      setBackfillMsg(`Added images to ${r.updated} post${r.updated === 1 ? '' : 's'}`)
+      await loadAll()
+    } catch (e: unknown) {
+      setBackfillMsg(e instanceof Error ? e.message : 'Backfill failed')
+    } finally {
+      setBackfilling(false)
+      setTimeout(() => setBackfillMsg(''), 6000)
+    }
+  }
+
   async function fetchOne(id: number) {
     setFetchingOne(id)
     try {
@@ -259,6 +276,15 @@ export default function TelegramPage() {
             <RefreshCw size={14} />
           </button>
           <button
+            onClick={backfillImages}
+            disabled={backfilling || !authOk}
+            title="Download images for already-stored posts that have none"
+            className="flex items-center gap-2 px-3 py-1.5 bg-[#0d1117] border border-[#1e2433] hover:border-indigo-500/50 disabled:opacity-40 rounded-lg text-sm text-slate-300 hover:text-white transition-colors"
+          >
+            {backfilling ? <Loader2 size={13} className="animate-spin" /> : <ImageIcon size={13} />}
+            Backfill images
+          </button>
+          <button
             onClick={fetchAll}
             disabled={fetching || !authOk}
             className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg text-sm text-white font-medium transition-colors"
@@ -267,6 +293,7 @@ export default function TelegramPage() {
             Fetch now
           </button>
         </div>
+        {backfillMsg && <span className="text-xs text-indigo-300 ml-2">{backfillMsg}</span>}
       </div>
 
       {fetchResult && (

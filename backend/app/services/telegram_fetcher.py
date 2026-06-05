@@ -41,24 +41,55 @@ _SESSION_PATH = str(Path(__file__).resolve().parent.parent.parent / "telegram_se
 _MEDIA_DIR = Path(__file__).resolve().parent.parent.parent / "media" / "telegram"
 
 
-async def _download_post_photo(client, msg, channel_id: str) -> Optional[str]:
-    """Download a message's photo (if any) and return its served URL path.
+def _msg_has_media(msg) -> bool:
+    return bool(getattr(msg, "media", None) or getattr(msg, "photo", None))
 
-    Returns None when the message has no photo or the download fails.
+
+async def _download_post_media(client, msg, channel_id: str) -> Optional[str]:
+    """Download a displayable image for ANY media a message carries and return
+    its served URL path.
+
+    - Photos and link/web-page previews → the image itself.
+    - Videos, GIFs, documents, stickers → the largest thumbnail (a preview image),
+      avoiding huge full-file downloads.
+
+    Returns None when the message has no usable media or the download fails.
     """
-    if not getattr(msg, "photo", None):
+    if not _msg_has_media(msg):
         return None
+
+    _MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    safe_channel = re.sub(r"[^0-9A-Za-z_-]", "", str(channel_id)) or "chan"
+    fname = f"{safe_channel}_{msg.id}.jpg"
+    path = _MEDIA_DIR / fname
+
+    if path.exists() and path.stat().st_size > 0:
+        return f"/media/telegram/{fname}"
+
     try:
-        _MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-        safe_channel = re.sub(r"[^0-9A-Za-z_-]", "", str(channel_id)) or "chan"
-        fname = f"{safe_channel}_{msg.id}.jpg"
-        path = _MEDIA_DIR / fname
-        if not path.exists():
-            await client.download_media(msg, file=str(path))
-        if path.exists() and path.stat().st_size > 0:
+        from telethon.tl.types import MessageMediaPhoto, MessageMediaWebPage
+
+        media = getattr(msg, "media", None)
+        is_image = bool(getattr(msg, "photo", None)) or isinstance(media, (MessageMediaPhoto, MessageMediaWebPage))
+
+        downloaded = None
+        if is_image:
+            # Full image (photo, or the photo embedded in a web-page preview).
+            downloaded = await client.download_media(msg, file=str(path))
+        if not downloaded:
+            # Heavy media (video/document/sticker/gif) → grab a thumbnail preview.
+            downloaded = await client.download_media(msg, file=str(path), thumb=-1)
+        if not downloaded:
+            # Last resort for small image-documents etc.
+            downloaded = await client.download_media(msg, file=str(path))
+
+        if downloaded and path.exists() and path.stat().st_size > 0:
             return f"/media/telegram/{fname}"
+        # Nothing usable was written — clean up an empty/partial file.
+        if path.exists() and path.stat().st_size == 0:
+            path.unlink(missing_ok=True)
     except Exception as exc:
-        logger.debug("[telegram] photo download failed for %s/%s: %s", channel_id, msg.id, exc)
+        logger.debug("[telegram] media download failed for %s/%s: %s", channel_id, msg.id, exc)
     return None
 
 # Per-process asyncio lock — prevents concurrent access to the SQLite session file.
@@ -218,24 +249,34 @@ async def fetch_telegram_channel(
                         break
 
                     text = (getattr(msg, "message", "") or "").strip()
-                    if not text:
-                        continue
+                    has_media = _msg_has_media(msg)
+                    if not text and not has_media:
+                        continue   # nothing to store
 
                     u = _msg_url(source.channel_id, msg.id)
                     u_hash = url_hash(u)
-                    if db.query(Article).filter(Article.url_hash == u_hash).first():
+                    existing = db.query(Article).filter(Article.url_hash == u_hash).first()
+                    if existing:
+                        # Backfill the image for a post that was stored before media
+                        # fetching existed.
+                        if not existing.image_url and _msg_has_media(msg):
+                            img = await _download_post_media(client, msg, source.channel_id)
+                            if img:
+                                existing.image_url = img
                         continue   # already stored
 
-                    # First non-empty line → title (≤200 chars)
+                    # First non-empty line → title (≤200 chars). Media-only posts
+                    # get a generic title so they still render as a card.
                     first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:200]
+                    title = first_line or ("Media post" if has_media else None)
 
-                    # Download the post's photo (if present) and attach its URL.
-                    image_url = await _download_post_photo(client, msg, source.channel_id)
+                    # Download a displayable image for any media the post carries.
+                    image_url = await _download_post_media(client, msg, source.channel_id)
 
                     article = Article(
                         url=u,
                         url_hash=u_hash,
-                        title=first_line or None,
+                        title=title,
                         source=source.name or source.channel_id,
                         category="telegram",
                         published_at=msg_time,
@@ -286,6 +327,86 @@ async def fetch_telegram_channel(
         db.rollback()
 
     return new_ids
+
+
+# ── Image backfill for existing posts ────────────────────────────────────────
+
+async def backfill_telegram_images(db: Session, limit: int = 300) -> int:
+    """Download images for already-stored Telegram posts that have no image yet.
+
+    Re-fetches the specific messages by id (grouped per channel) and downloads
+    any photo. Returns the number of articles updated.
+    """
+    from collections import defaultdict
+    from telethon import TelegramClient
+
+    articles = (
+        db.query(Article)
+        .filter(Article.category == "telegram", Article.image_url.is_(None))
+        .order_by(Article.id.desc())
+        .limit(limit)
+        .all()
+    )
+    if not articles:
+        return 0
+
+    by_channel: dict[str, dict[int, Article]] = defaultdict(dict)
+    for a in articles:
+        m = re.match(r"telegram://([^/]+)/(\d+)", a.url or "")
+        if m:
+            by_channel[m.group(1)][int(m.group(2))] = a
+    if not by_channel:
+        return 0
+
+    api_id = int(_cred(db, "telegram_api_id"))
+    api_hash = _cred(db, "telegram_api_hash")
+    updated = 0
+
+    async with _get_lock():
+        client = TelegramClient(_SESSION_PATH, api_id, api_hash)
+        await client.connect()
+        try:
+            if not await client.is_user_authorized():
+                return 0
+            for channel_str, id_to_art in by_channel.items():
+                try:
+                    peer = int(channel_str)
+                except (ValueError, TypeError):
+                    peer = channel_str
+                try:
+                    entity = await client.get_entity(peer)
+                except Exception as exc:
+                    logger.debug("[telegram] backfill: cannot resolve %s: %s", channel_str, exc)
+                    continue
+                ids = list(id_to_art.keys())
+                for i in range(0, len(ids), 100):
+                    batch = ids[i:i + 100]
+                    try:
+                        msgs = await client.get_messages(entity, ids=batch)
+                    except Exception as exc:
+                        logger.debug("[telegram] backfill: get_messages failed for %s: %s", channel_str, exc)
+                        continue
+                    for msg in msgs:
+                        if not msg or not _msg_has_media(msg):
+                            continue
+                        art = id_to_art.get(msg.id)
+                        if art and not art.image_url:
+                            img = await _download_post_media(client, msg, channel_str)
+                            if img:
+                                art.image_url = img
+                                updated += 1
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+    logger.info("[telegram] backfilled images for %d post(s)", updated)
+    return updated
 
 
 # ── Unread channel discovery ────────────────────────────────────────────────

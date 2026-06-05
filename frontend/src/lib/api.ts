@@ -969,6 +969,10 @@ export const telegramApi = {
     return request<{ new_articles: number; ids: number[] }>(`/telegram/${id}/fetch`, { method: 'POST' })
   },
 
+  backfillImages() {
+    return request<{ updated: number }>('/telegram/backfill-images', { method: 'POST' })
+  },
+
   listUnread() {
     return request<TelegramUnreadChannel[]>('/telegram/unread')
   },
