@@ -720,6 +720,40 @@ def _media_path_for(image_url: str):
     return None
 
 
+async def _load_image(image_url: str) -> tuple[bytes | None, str]:
+    """Load image bytes + mime from a local /media path or a remote http(s) URL."""
+    import mimetypes
+    image_url = (image_url or "").strip()
+    if not image_url:
+        return None, "image/jpeg"
+
+    # Local stored media file.
+    path = _media_path_for(image_url)
+    if path:
+        mime = mimetypes.guess_type(str(path))[0] or "image/jpeg"
+        try:
+            return path.read_bytes(), mime
+        except Exception:
+            return None, mime
+
+    # Remote image (e.g. RSS article image).
+    if image_url.startswith(("http://", "https://")):
+        import httpx
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; NewsPortal/1.0)"}
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+                r = await client.get(image_url, headers=headers)
+                r.raise_for_status()
+                ctype = (r.headers.get("content-type") or "").split(";")[0].strip()
+                mime = ctype if ctype.startswith("image/") else (mimetypes.guess_type(image_url)[0] or "image/jpeg")
+                data = r.content
+                if data and len(data) <= 15 * 1024 * 1024:
+                    return data, mime
+        except Exception:
+            return None, "image/jpeg"
+    return None, "image/jpeg"
+
+
 @router.post("/article/{article_id}/analyze-attachment")
 async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db: Session = Depends(get_db)):
     """Analyze a post's media (image, via vision) or a link found in it."""
@@ -731,13 +765,11 @@ async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db
     lang_clause = "" if not lang or lang.lower() == "english" else f" Respond entirely in {lang}."
 
     if body.kind == "image":
-        path = _media_path_for(article.image_url or "")
-        if not path:
-            raise HTTPException(status_code=400, detail="No local image attached to this post")
-        try:
-            image_bytes = path.read_bytes()
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Could not read image: {exc}")
+        if not (article.image_url or "").strip():
+            raise HTTPException(status_code=400, detail="No image attached to this post")
+        image_bytes, mime = await _load_image(article.image_url)
+        if not image_bytes:
+            raise HTTPException(status_code=502, detail="Could not load the post image")
         system = (
             "You are a visual analyst. Describe and analyze the image in the context of the news "
             "post it accompanies. Note what is shown, any text/figures/logos/people visible, what it "
@@ -746,7 +778,7 @@ async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db
         ctx = (article.content or article.title or "").strip()[:1500]
         user = f"Post text for context:\n{ctx}\n\nAnalyze the attached image."
         try:
-            text = await call_ai_vision(system=system, user=user, image_bytes=image_bytes, mime="image/jpeg", db=db)
+            text = await call_ai_vision(system=system, user=user, image_bytes=image_bytes, mime=mime, db=db)
         except Exception as exc:
             logger.error("Attachment image analysis failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"Image analysis failed: {exc}")
