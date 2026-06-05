@@ -4,8 +4,11 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .auth_deps import get_current_user
 from .config import settings as app_settings
@@ -125,6 +128,13 @@ app.include_router(sources.router, prefix="/sources", tags=["sources"], dependen
 app.include_router(logs.router, prefix="/logs", tags=["logs"], dependencies=_protected)
 app.include_router(telegram.router, prefix="/telegram", tags=["telegram"], dependencies=_protected)
 app.include_router(search.router, prefix="/search", tags=["search"], dependencies=_protected)
+
+
+# Serve downloaded media (e.g. Telegram post images) as static files. Public so
+# <img> tags can load them without an Authorization header.
+_MEDIA_ROOT = Path(__file__).resolve().parent.parent / "media"
+_MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=str(_MEDIA_ROOT)), name="media")
 
 
 @app.get("/health")

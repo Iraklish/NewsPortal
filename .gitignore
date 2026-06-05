@@ -32,6 +32,9 @@ backend/logs/
 *.session
 *.session-journal
 
+# Downloaded post media (Telegram images, etc.)
+backend/media/
+
 # ── Node / Frontend ───────────────────────────────────────────────────────────
 node_modules/
 .next/

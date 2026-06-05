@@ -6,6 +6,7 @@ import {
   analysisApi,
   sourcesApi,
   settingsApi,
+  resolveMediaUrl,
   type Article,
   type Analysis,
   type SummaryResponse,
@@ -995,7 +996,7 @@ function ArticleCard({
         {article.image_url && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={article.image_url}
+            src={resolveMediaUrl(article.image_url)}
             alt=""
             className="w-20 h-20 object-cover rounded-lg flex-shrink-0"
             onError={e => (e.currentTarget.style.display = 'none')}
@@ -1333,6 +1334,16 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Post image */}
+          {article.image_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={resolveMediaUrl(article.image_url)}
+              alt=""
+              className="w-full max-h-80 object-contain rounded-lg bg-[#0a0f1e] border border-[#1e2433]"
+              onError={e => (e.currentTarget.style.display = 'none')}
+            />
+          )}
           {/* Article summary / content */}
           {(article.summary || article.content) && (
             <div className="bg-[#0a0f1e] rounded-lg p-4 border border-[#1e2433]">

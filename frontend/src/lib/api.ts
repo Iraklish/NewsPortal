@@ -32,6 +32,15 @@ export function clearAuthToken(): void {
   try { window.localStorage.removeItem(TOKEN_KEY) } catch {}
 }
 
+// Resolve a possibly-relative media URL (e.g. /media/telegram/x.jpg from the API)
+// to an absolute URL against the backend, so <img> tags load from the API host.
+export function resolveMediaUrl(url?: string | null): string | undefined {
+  if (!url) return undefined
+  if (/^https?:\/\//i.test(url) || url.startsWith('data:')) return url
+  if (url.startsWith('/')) return `${BASE}${url}`
+  return url
+}
+
 function redirectToSignin(): void {
   if (typeof window === 'undefined') return
   if (window.location.pathname !== '/signin') {

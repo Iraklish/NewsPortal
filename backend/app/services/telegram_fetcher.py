@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -34,6 +35,31 @@ logger = logging.getLogger(__name__)
 
 # Session file lives next to backend/economic_review.db for persistence.
 _SESSION_PATH = str(Path(__file__).resolve().parent.parent.parent / "telegram_session")
+
+# Downloaded post images go under backend/media/telegram and are served by the
+# API at /media/telegram/<file> (see main.py StaticFiles mount).
+_MEDIA_DIR = Path(__file__).resolve().parent.parent.parent / "media" / "telegram"
+
+
+async def _download_post_photo(client, msg, channel_id: str) -> Optional[str]:
+    """Download a message's photo (if any) and return its served URL path.
+
+    Returns None when the message has no photo or the download fails.
+    """
+    if not getattr(msg, "photo", None):
+        return None
+    try:
+        _MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+        safe_channel = re.sub(r"[^0-9A-Za-z_-]", "", str(channel_id)) or "chan"
+        fname = f"{safe_channel}_{msg.id}.jpg"
+        path = _MEDIA_DIR / fname
+        if not path.exists():
+            await client.download_media(msg, file=str(path))
+        if path.exists() and path.stat().st_size > 0:
+            return f"/media/telegram/{fname}"
+    except Exception as exc:
+        logger.debug("[telegram] photo download failed for %s/%s: %s", channel_id, msg.id, exc)
+    return None
 
 # Per-process asyncio lock — prevents concurrent access to the SQLite session file.
 _lock: Optional[asyncio.Lock] = None
@@ -203,6 +229,9 @@ async def fetch_telegram_channel(
                     # First non-empty line → title (≤200 chars)
                     first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:200]
 
+                    # Download the post's photo (if present) and attach its URL.
+                    image_url = await _download_post_photo(client, msg, source.channel_id)
+
                     article = Article(
                         url=u,
                         url_hash=u_hash,
@@ -211,6 +240,7 @@ async def fetch_telegram_channel(
                         category="telegram",
                         published_at=msg_time,
                         content=text,
+                        image_url=image_url,
                         is_analyzed=False,
                     )
                     db.add(article)
