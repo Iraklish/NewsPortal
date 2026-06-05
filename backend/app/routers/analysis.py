@@ -23,9 +23,9 @@ from ..schemas import (
     ReportAskRequest,
 )
 from ..services.analyzer import analyze_article, run_directed_analysis
-from ..services.ai_client import call_ai, call_ai_grounded
+from ..services.ai_client import call_ai, call_ai_grounded, call_ai_vision
 from ..services.directed_report import count_db_articles, run_directed_report
-from ..services.search_service import multi_engine_search
+from ..services.search_service import fetch_url, multi_engine_search
 
 
 def _get_prompt(db: Session, key: str, default: str) -> str:
@@ -695,6 +695,95 @@ async def factcheck_article(
         "references": web_refs,
         "used_web": bool(grounded.provider_used_grounding or web_refs),
     }
+
+
+_URL_RE = re.compile(r"https?://[^\s)>\]]+")
+
+
+class AnalyzeAttachmentRequest(BaseModel):
+    kind: str            # 'image' | 'link'
+    url: Optional[str] = None
+    language: str = ""
+
+
+def _media_path_for(image_url: str):
+    """Resolve a stored /media/... URL to its local file path (or None)."""
+    if not image_url or not image_url.startswith("/media/"):
+        return None
+    from pathlib import Path
+    media_root = Path(__file__).resolve().parents[2] / "media"
+    rel = image_url[len("/media/"):]
+    p = (media_root / rel).resolve()
+    # Guard against path traversal — must stay under media_root.
+    if media_root.resolve() in p.parents and p.exists():
+        return p
+    return None
+
+
+@router.post("/article/{article_id}/analyze-attachment")
+async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db: Session = Depends(get_db)):
+    """Analyze a post's media (image, via vision) or a link found in it."""
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    lang = (body.language or "").strip()
+    lang_clause = "" if not lang or lang.lower() == "english" else f" Respond entirely in {lang}."
+
+    if body.kind == "image":
+        path = _media_path_for(article.image_url or "")
+        if not path:
+            raise HTTPException(status_code=400, detail="No local image attached to this post")
+        try:
+            image_bytes = path.read_bytes()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Could not read image: {exc}")
+        system = (
+            "You are a visual analyst. Describe and analyze the image in the context of the news "
+            "post it accompanies. Note what is shown, any text/figures/logos/people visible, what it "
+            "implies, and whether it supports or adds to the post. Be concrete and concise." + lang_clause
+        )
+        ctx = (article.content or article.title or "").strip()[:1500]
+        user = f"Post text for context:\n{ctx}\n\nAnalyze the attached image."
+        try:
+            text = await call_ai_vision(system=system, user=user, image_bytes=image_bytes, mime="image/jpeg", db=db)
+        except Exception as exc:
+            logger.error("Attachment image analysis failed: %s", exc)
+            raise HTTPException(status_code=500, detail=f"Image analysis failed: {exc}")
+        return {"response": text, "kind": "image"}
+
+    if body.kind == "link":
+        url = (body.url or "").strip()
+        if not url:
+            m = _URL_RE.search(article.content or "")
+            url = m.group(0) if m else ""
+        if not url:
+            raise HTTPException(status_code=400, detail="No link found in this post")
+        try:
+            page = await fetch_url(url)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Could not fetch link: {exc}")
+        if page.get("status") != "ok" or not (page.get("content") or "").strip():
+            raise HTTPException(status_code=502, detail=page.get("error") or "Could not read the linked page")
+        content = (page.get("content") or "")[:8000]
+        system = (
+            "You are an expert news analyst. Summarize and analyze the linked article: the key facts, "
+            "who is involved, why it matters, and its economic/market/geopolitical implications. Be "
+            "concrete with numbers, names and dates." + lang_clause
+        )
+        user = (
+            f"Source link: {url}\n"
+            f"Title: {page.get('title') or '(unknown)'}\n\n"
+            f"Linked article content:\n{content}"
+        )
+        try:
+            text = await call_ai(system=system, user=user, max_tokens=1500, db=db)
+        except Exception as exc:
+            logger.error("Attachment link analysis failed: %s", exc)
+            raise HTTPException(status_code=500, detail=f"Link analysis failed: {exc}")
+        return {"response": text, "kind": "link", "url": url}
+
+    raise HTTPException(status_code=400, detail="kind must be 'image' or 'link'")
 
 
 _NEED_WEB_MARKER = "[NEED_WEB]"

@@ -195,6 +195,93 @@ async def call_ai(
         raise
 
 
+# ── Vision (image) calls ─────────────────────────────────────────────────────
+
+def _vision_anthropic(api_key, model, system, user, image_b64, mime, max_tokens):
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+    r = client.messages.create(
+        model=model, max_tokens=max_tokens, system=system,
+        messages=[{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": image_b64}},
+            {"type": "text", "text": user},
+        ]}],
+    )
+    return r.content[0].text
+
+
+def _vision_openai(api_key, model, system, user, image_b64, mime, max_tokens, base_url=None):
+    import openai
+    kwargs = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    client = openai.OpenAI(**kwargs)
+    r = client.chat.completions.create(
+        model=model, max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": [
+                {"type": "text", "text": user},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
+            ]},
+        ],
+    )
+    return r.choices[0].message.content
+
+
+def _vision_gemini(api_key, model, system, user, image_bytes, mime, max_tokens):
+    from google import genai
+    from google.genai import types
+    client = genai.Client(api_key=api_key)
+    r = client.models.generate_content(
+        model=model,
+        contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime), user],
+        config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=max_tokens),
+    )
+    return r.text
+
+
+async def call_ai_vision(system: str, user: str, image_bytes: bytes, mime: str = "image/jpeg",
+                         max_tokens: int = 1500, db=None) -> str:
+    """Analyze an image with the configured (vision-capable) provider.
+
+    Supports Anthropic, OpenAI/custom/DeepSeek (OpenAI-compatible), and Gemini.
+    """
+    import base64
+    provider, model = await get_current_ai_settings(db)
+    loop = asyncio.get_event_loop()
+    b64 = base64.b64encode(image_bytes).decode()
+
+    try:
+        if provider == "anthropic":
+            key = _get_api_key("anthropic_api_key", db)
+            if not key:
+                raise ValueError("Anthropic API key not configured")
+            return await loop.run_in_executor(None, lambda: _vision_anthropic(key, model, system, user, b64, mime, max_tokens))
+        if provider == "gemini":
+            key = _get_api_key("gemini_api_key", db)
+            if not key:
+                raise ValueError("Gemini API key not configured")
+            return await loop.run_in_executor(None, lambda: _vision_gemini(key, model, system, user, image_bytes, mime, max_tokens))
+        if provider == "openai":
+            key = _get_api_key("openai_api_key", db)
+            if not key:
+                raise ValueError("OpenAI API key not configured")
+            return await loop.run_in_executor(None, lambda: _vision_openai(key, model, system, user, b64, mime, max_tokens))
+        if provider == "deepseek":
+            key = _get_api_key("deepseek_api_key", db)
+            return await loop.run_in_executor(None, lambda: _vision_openai(key, model, system, user, b64, mime, max_tokens, base_url="https://api.deepseek.com/v1"))
+        if provider == "custom":
+            key = _get_api_key("custom_ai_api_key", db)
+            endpoint = _get_api_key("custom_ai_endpoint", db) or settings.custom_ai_endpoint
+            cmodel = _get_api_key("custom_ai_model", db) or settings.custom_ai_model or model
+            return await loop.run_in_executor(None, lambda: _vision_openai(key, cmodel, system, user, b64, mime, max_tokens, base_url=endpoint))
+        raise ValueError(f"Vision not supported for provider: {provider}")
+    except Exception as exc:
+        logger.error("AI vision call failed (provider=%s model=%s): %s", provider, model, exc)
+        raise
+
+
 # ── Grounded (web-search) calls ──────────────────────────────────────────────
 
 def _call_gemini_grounded(api_key: str, model: str, system: str, user: str, max_tokens: int) -> GroundedResponse:

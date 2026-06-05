@@ -19,6 +19,7 @@ import {
   RefreshCw, Search, X, ExternalLink, Loader2, Sparkles,
   Send, ChevronDown, ChevronLeft, ChevronRight, Clock, Plus, BookOpen, Globe, Maximize2, Minimize2,
   CheckSquare, Square, Tag, LayoutGrid, Rows3, Trash2, ScrollText, ShieldCheck,
+  Image as ImageIcon, Link2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import AddArticleModal from '@/components/AddArticleModal'
@@ -1267,6 +1268,38 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
     }
   }
 
+  // First http(s) link found in the post (for "analyze link").
+  const postLink = (article.content || '').match(/https?:\/\/[^\s)>\]]+/)?.[0]
+
+  async function runAttachment(kind: 'image' | 'link', url?: string) {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    const now = Date.now()
+    const pendingId = `p-${now}`
+    const label = kind === 'image' ? 'Analyze image' : 'Analyze link'
+    setTimeline(prev => [...prev,
+      { kind: 'user', id: `u-${now}`, at: now, content: label },
+      { kind: 'pending-chat', id: pendingId, at: now + 1 },
+    ])
+    try {
+      const res = await analysisApi.analyzeAttachment(article.id, kind, url, LANG_INSTRUCTION[language] ? language : undefined)
+      setTimeline(prev => prev
+        .filter(it => it.id !== pendingId)
+        .concat({ kind: 'assistant', id: `m-${Date.now()}`, at: Date.now(), content: res.response })
+      )
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setError(msg)
+      setTimeline(prev => prev
+        .filter(it => it.id !== pendingId)
+        .concat({ kind: 'assistant', id: `e-${Date.now()}`, at: Date.now(), content: `Error: ${msg}` })
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const analyzeCount = timeline.filter(it => it.kind === 'analysis').length
 
   return (
@@ -1351,6 +1384,34 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
                 {stripHtml(article.summary || article.content?.slice(0, 1500) || '')}
                 {article.content && article.content.length > 1500 && '…'}
               </p>
+            </div>
+          )}
+
+          {/* Analyze attachment — tiny icon buttons (media / link) */}
+          {(article.image_url || postLink) && (
+            <div className="flex items-center gap-1.5">
+              {article.image_url && (
+                <button
+                  onClick={() => runAttachment('image')}
+                  disabled={busy}
+                  title="Analyze the post image with AI"
+                  aria-label="Analyze image"
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-300 hover:bg-white/5 border border-[#1e2433] hover:border-indigo-500/40 transition-colors disabled:opacity-40"
+                >
+                  <ImageIcon size={14} />
+                </button>
+              )}
+              {postLink && (
+                <button
+                  onClick={() => runAttachment('link', postLink)}
+                  disabled={busy}
+                  title={`Analyze linked page: ${postLink}`}
+                  aria-label="Analyze link"
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-300 hover:bg-white/5 border border-[#1e2433] hover:border-indigo-500/40 transition-colors disabled:opacity-40"
+                >
+                  <Link2 size={14} />
+                </button>
+              )}
             </div>
           )}
 

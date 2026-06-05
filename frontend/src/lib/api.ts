@@ -640,6 +640,17 @@ export const analysisApi = {
     )
   },
 
+  analyzeAttachment(articleId: number, kind: 'image' | 'link', url?: string, language?: string) {
+    return request<{ response: string; kind: string; url?: string }>(
+      `/analysis/article/${articleId}/analyze-attachment`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, url, language }),
+      },
+    )
+  },
+
   listForArticle(articleId: number) {
     return request<Analysis[]>(`/analysis?article_id=${articleId}`)
   },
