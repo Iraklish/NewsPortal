@@ -48,6 +48,12 @@ async def ai_extract_tags(article: Article, db) -> list[str]:
         logger.warning("[tagger] AI call failed for article %s: %s", article.id, exc)
         raise
 
+    # The model can legitimately return an empty/None response (e.g. blocked or
+    # no candidate text) — that's "no tags", not a parse error.
+    if not raw or not str(raw).strip():
+        logger.info("[tagger] empty AI response for article %s — no tags", article.id)
+        return []
+
     # Parsing problems are soft: the call succeeded but the output wasn't usable.
     try:
         cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
