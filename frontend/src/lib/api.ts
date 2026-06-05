@@ -745,6 +745,18 @@ export const settingsApi = {
     })
   },
 
+  getAnalysisFocusPresets() {
+    return request<{ presets: string[] }>('/settings/analysis-focus-presets')
+  },
+
+  setAnalysisFocusPresets(presets: string[]) {
+    return request<{ presets: string[] }>('/settings/analysis-focus-presets', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ presets }),
+    })
+  },
+
   setQuickTickers(tickers: string[]) {
     return request<{ tickers: string[] }>('/settings/quick-tickers', {
       method: 'PUT',

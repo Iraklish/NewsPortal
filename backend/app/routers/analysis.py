@@ -491,6 +491,16 @@ async def directed_report(
     except Exception as exc:
         logger.exception("Directed report generation failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
+
+    # Reports are not kept as history — discard all but the one just generated.
+    # (The current report stays so its follow-up chat can resolve it by id.)
+    try:
+        db.query(DirectedReport).filter(DirectedReport.id != report.id).delete(synchronize_session=False)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("[directed] could not prune old reports: %s", exc)
+
     return report
 
 

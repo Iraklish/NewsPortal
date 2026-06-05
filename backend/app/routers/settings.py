@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..config import (
+    DEFAULT_ANALYSIS_FOCUS_PRESETS,
     DEFAULT_ARTICLE_SUMMARIZE_PROMPT,
     DEFAULT_ASK_SYSTEM_PROMPT,
     DEFAULT_CHAT_SYSTEM_PROMPT,
@@ -359,6 +360,39 @@ def set_summary_presets(body: SummaryPresetsIn, db: Session = Depends(get_db)):
             cleaned.append(t)
     cleaned = cleaned[:20]
     _set_db(db, "summary_presets", json.dumps(cleaned))
+    db.commit()
+    return {"presets": cleaned}
+
+
+def _clean_presets(presets: List[str]) -> List[str]:
+    cleaned: List[str] = []
+    seen: set[str] = set()
+    for p in presets:
+        t = (p or "").strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            cleaned.append(t)
+    return cleaned[:20]
+
+
+@router.get("/analysis-focus-presets")
+def get_analysis_focus_presets(db: Session = Depends(get_db)):
+    """Return the predefined focus-topic presets for the Analysis page."""
+    raw = _db_get(db, "analysis_focus_presets")
+    if raw is None:
+        return {"presets": DEFAULT_ANALYSIS_FOCUS_PRESETS}
+    try:
+        presets = json.loads(raw)
+        return {"presets": presets if isinstance(presets, list) else DEFAULT_ANALYSIS_FOCUS_PRESETS}
+    except Exception:
+        return {"presets": DEFAULT_ANALYSIS_FOCUS_PRESETS}
+
+
+@router.put("/analysis-focus-presets")
+def set_analysis_focus_presets(body: SummaryPresetsIn, db: Session = Depends(get_db)):
+    """Save the Analysis-page focus-topic presets (trim, de-dupe, cap at 20)."""
+    cleaned = _clean_presets(body.presets)
+    _set_db(db, "analysis_focus_presets", json.dumps(cleaned))
     db.commit()
     return {"presets": cleaned}
 

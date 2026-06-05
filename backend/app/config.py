@@ -96,6 +96,18 @@ DEFAULT_ARTICLE_SUMMARIZE_PROMPT = (
 )
 
 
+# Predefined focus-topic presets for the Analysis & Prognosis page. Editable
+# (persisted in AppSettings under "analysis_focus_presets"); capped at 20.
+DEFAULT_ANALYSIS_FOCUS_PRESETS: list[str] = [
+    "Impact of Iran sanctions on global oil markets and energy security",
+    "Federal Reserve interest rate outlook and market implications",
+    "Israel–Middle East conflict economic and geopolitical impact",
+    "AI sector investment trends and key players",
+    "China economic slowdown and global supply chains",
+    "European energy security and natural gas markets",
+]
+
+
 # Predefined "extra instructions" presets for the Article Summary page. Editable
 # (persisted in AppSettings under "summary_presets"); capped at 20.
 DEFAULT_SUMMARY_PRESETS: list[str] = [

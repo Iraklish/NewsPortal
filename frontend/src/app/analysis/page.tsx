@@ -1,13 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { analysisApi, articlesApi, type DirectedReport, type DirectedReportListItem } from '@/lib/api'
+import { analysisApi, articlesApi, settingsApi, type DirectedReport } from '@/lib/api'
 import ImpactBadge from '@/components/ImpactBadge'
 import { useLanguage } from '@/lib/language'
 import {
   Sparkles, Loader2, ExternalLink, Trash2, AlertCircle, Globe, Database,
-  TrendingUp, TrendingDown, Zap, ChevronRight, RefreshCw, Search,
-  MessageCircle, Send, ChevronDown, ChevronUp, Maximize2, Minimize2, X,
+  TrendingUp, TrendingDown, Zap, Search, Plus,
+  MessageCircle, Send, ChevronDown, ChevronRight, ChevronUp, Maximize2, Minimize2, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -51,28 +51,18 @@ export default function AnalysisPage() {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const [current, setCurrent] = useState<DirectedReport | null>(null)
-  const [reports, setReports] = useState<DirectedReportListItem[]>([])
-  const [poppedReport, setPoppedReport] = useState<DirectedReport | null>(null)
-  const [poppingId, setPoppingId] = useState<number | null>(null)
-  const [loadingHistory, setLoadingHistory] = useState(true)
-  const [trendingTopics, setTrendingTopics] = useState<string[]>([])
-  const [loadingTopics, setLoadingTopics] = useState(true)
 
-  async function loadHistory() {
-    try {
-      const data = await analysisApi.listReports()
-      setReports(data)
-    } finally {
-      setLoadingHistory(false)
-    }
-  }
+  // Predefined, editable focus-topic presets (collapsed by default)
+  const [focusPresets, setFocusPresets] = useState<string[]>([])
+  const [showPresets, setShowPresets] = useState(false)
+  const [editPresets, setEditPresets] = useState(false)
+  const [newPreset, setNewPreset] = useState('')
+  const [savingPresets, setSavingPresets] = useState(false)
 
   useEffect(() => {
-    loadHistory()
-    articlesApi.trendingTopics({ limit: 20, hours: 72 })
-      .then(r => setTrendingTopics(r.topics))
+    settingsApi.getAnalysisFocusPresets()
+      .then(r => setFocusPresets(r.presets))
       .catch(() => {})
-      .finally(() => setLoadingTopics(false))
     articlesApi.categories()
       .then(cats => setCategories(cats))
       .catch(() => {})
@@ -80,6 +70,34 @@ export default function AnalysisPage() {
       .then(ts => setAllTags(ts))
       .catch(() => {})
   }, [])
+
+  async function persistPresets(next: string[]) {
+    const prev = focusPresets
+    setFocusPresets(next)
+    setSavingPresets(true)
+    try {
+      const r = await settingsApi.setAnalysisFocusPresets(next)
+      setFocusPresets(r.presets)
+    } catch {
+      setFocusPresets(prev)
+    } finally {
+      setSavingPresets(false)
+    }
+  }
+
+  function addPreset() {
+    const t = newPreset.trim()
+    if (!t || focusPresets.length >= 20 || focusPresets.some(p => p.toLowerCase() === t.toLowerCase())) {
+      setNewPreset('')
+      return
+    }
+    persistPresets([...focusPresets, t])
+    setNewPreset('')
+  }
+
+  function removePreset(p: string) {
+    persistPresets(focusPresets.filter(x => x !== p))
+  }
 
   const combinedFocus = focus.trim()
     + (aspect.trim() ? ` — analyzed from the perspective of: ${aspect.trim()}` : '')
@@ -100,35 +118,10 @@ export default function AnalysisPage() {
         language: language !== 'English' ? language : undefined,
       })
       setCurrent(report)
-      loadHistory()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setRunning(false)
-    }
-  }
-
-  async function deleteReport(id: number) {
-    if (!confirm('Delete this report?')) return
-    try {
-      await analysisApi.deleteReport(id)
-      if (current?.id === id) setCurrent(null)
-      if (poppedReport?.id === id) setPoppedReport(null)
-      loadHistory()
-    } catch {}
-  }
-
-  // History rows are lightweight — fetch the full report only when opening one.
-  async function openReport(id: number) {
-    setPoppingId(id)
-    try {
-      const full = await analysisApi.getReport(id)
-      setPoppedReport(full)
-    } catch {
-      // ignore — likely deleted; refresh the list
-      loadHistory()
-    } finally {
-      setPoppingId(null)
     }
   }
 
@@ -158,23 +151,63 @@ export default function AnalysisPage() {
           className="w-full bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 resize-none"
         />
 
-        <div className="flex flex-wrap gap-1.5 mt-2 min-h-[22px]">
-          {loadingTopics ? (
-            <span className="text-[10px] text-slate-600 flex items-center gap-1">
-              <Loader2 size={10} className="animate-spin" /> Loading trending topics…
-            </span>
-          ) : trendingTopics.length > 0 ? (
-            trendingTopics.map(p => (
-              <button
-                key={p}
-                onClick={() => setFocus(p)}
-                className="text-[10px] px-2 py-0.5 bg-[#0a0f1e] border border-[#1e2433] hover:border-indigo-500/40 text-slate-400 hover:text-white rounded-full transition-colors"
-              >
-                {p}
-              </button>
-            ))
-          ) : (
-            <span className="text-[10px] text-slate-600 italic">No trending topics yet — fetch some news first.</span>
+        {/* Predefined focus topics — collapsed by default, editable */}
+        <div className="mt-2">
+          <button
+            onClick={() => setShowPresets(v => !v)}
+            className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-white transition-colors"
+            title={showPresets ? 'Hide presets' : 'Show presets'}
+          >
+            {showPresets ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+            Predefined topics
+            {focusPresets.length > 0 && <span className="text-slate-600">({focusPresets.length})</span>}
+          </button>
+
+          {showPresets && (
+            <div className="mt-2 space-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {focusPresets.map(p => (
+                  <span
+                    key={p}
+                    className="flex items-center gap-1 bg-[#0a0f1e] border border-[#1e2433] rounded-full pl-2.5 pr-1.5 py-0.5 text-[10px] text-slate-400"
+                  >
+                    <button onClick={() => setFocus(p)} className="hover:text-white transition-colors text-left" title="Use this topic">
+                      {p}
+                    </button>
+                    {editPresets && (
+                      <button onClick={() => removePreset(p)} disabled={savingPresets} title="Remove" className="text-slate-600 hover:text-red-400 transition-colors disabled:opacity-40">
+                        <X size={10} />
+                      </button>
+                    )}
+                  </span>
+                ))}
+                {focusPresets.length === 0 && <span className="text-[10px] text-slate-600 italic">No presets — add one below.</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                {editPresets && (
+                  <>
+                    <input
+                      value={newPreset}
+                      onChange={e => setNewPreset(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPreset() } }}
+                      placeholder="New focus topic…"
+                      maxLength={300}
+                      className="flex-1 bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/50"
+                    />
+                    <button
+                      onClick={addPreset}
+                      disabled={!newPreset.trim() || focusPresets.length >= 20 || savingPresets}
+                      className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 rounded-lg text-xs disabled:opacity-40 transition-colors"
+                    >
+                      {savingPresets ? <Loader2 size={11} className="animate-spin" /> : <Plus size={12} />} Add
+                    </button>
+                  </>
+                )}
+                <button onClick={() => setEditPresets(v => !v)} className="ml-auto text-[10px] text-slate-500 hover:text-white transition-colors">
+                  {editPresets ? 'Done' : 'Edit'}
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
@@ -275,58 +308,11 @@ export default function AnalysisPage() {
         </div>
       )}
 
-      {current && <ReportCard report={current} onDelete={() => deleteReport(current.id)} expanded />}
-
-      {/* History */}
-      <div className="mt-10">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Previous Reports</h2>
-          <button onClick={loadHistory} className="text-xs text-slate-500 hover:text-white transition-colors flex items-center gap-1">
-            <RefreshCw size={12} /> Refresh
-          </button>
-        </div>
-        {loadingHistory ? (
-          <div className="text-xs text-slate-500">Loading…</div>
-        ) : reports.length === 0 ? (
-          <p className="text-sm text-slate-500">No reports yet. Generate your first one above.</p>
-        ) : (
-          <div className="space-y-2">
-            {reports.map(r => (
-              <button
-                key={r.id}
-                onClick={() => openReport(r.id)}
-                disabled={poppingId !== null}
-                className={clsx(
-                  'w-full text-left bg-[#0d1117] border rounded-xl p-3 transition-colors flex items-center gap-3 disabled:opacity-60',
-                  poppedReport?.id === r.id
-                    ? 'border-indigo-500/50 bg-indigo-500/5'
-                    : 'border-[#1e2433] hover:border-[#2d3148]'
-                )}
-              >
-                {r.impact_type && <ImpactBadge type={r.impact_type} />}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white font-medium truncate">{r.focus}</p>
-                  <p className="text-xs text-slate-500 truncate">{r.headline}</p>
-                </div>
-                <div className="text-[10px] text-slate-600 flex items-center gap-3 flex-shrink-0">
-                  <span className="flex items-center gap-1"><Database size={10} />{r.db_article_count}</span>
-                  <span className="flex items-center gap-1"><Globe size={10} />{r.web_result_count}</span>
-                  <span>{fmt(r.created_at)}</span>
-                </div>
-                {poppingId === r.id
-                  ? <Loader2 size={14} className="text-indigo-400 animate-spin flex-shrink-0" />
-                  : <ChevronRight size={14} className="text-slate-600 flex-shrink-0" />}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {poppedReport && (
+      {current && (
         <ReportCard
-          report={poppedReport}
-          onDelete={() => { deleteReport(poppedReport.id); setPoppedReport(null) }}
-          onClose={() => setPoppedReport(null)}
+          report={current}
+          onDelete={() => { analysisApi.deleteReport(current.id).catch(() => {}); setCurrent(null) }}
+          expanded
         />
       )}
     </div>
