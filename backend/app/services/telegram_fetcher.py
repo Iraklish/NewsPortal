@@ -546,23 +546,32 @@ async def fetch_all_telegram_sources(db: Session) -> list[int]:
                                 break
 
                             text = (getattr(msg, "message", "") or "").strip()
-                            if not text:
+                            has_media = _msg_has_media(msg)
+                            if not text and not has_media:
                                 continue
 
                             u = _msg_url(source.channel_id, msg.id)
                             u_hash = url_hash(u)
-                            if db.query(Article).filter(Article.url_hash == u_hash).first():
+                            existing = db.query(Article).filter(Article.url_hash == u_hash).first()
+                            if existing:
+                                # Backfill image for a post stored before media fetching.
+                                if not existing.image_url and has_media:
+                                    img = await _download_post_media(client, msg, source.channel_id)
+                                    if img:
+                                        existing.image_url = img
                                 continue  # already stored
 
                             first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:200]
+                            image_url = await _download_post_media(client, msg, source.channel_id)
                             article = Article(
                                 url=u,
                                 url_hash=u_hash,
-                                title=first_line or None,
+                                title=first_line or ("Media post" if has_media else None),
                                 source=source.name or source.channel_id,
                                 category="telegram",
                                 published_at=msg_time,
                                 content=text,
+                                image_url=image_url,
                                 is_analyzed=False,
                             )
                             db.add(article)
