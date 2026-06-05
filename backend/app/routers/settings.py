@@ -16,6 +16,7 @@ from ..config import (
     DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT,
     DEFAULT_ENTERTAINMENT_KEYWORDS_STR,
     DEFAULT_QUICK_TICKERS,
+    DEFAULT_STOCK_SYSTEM_PROMPT,
     DEFAULT_SUMMARY_SYSTEM_PROMPT,
     settings,
 )
@@ -100,11 +101,13 @@ def get_settings(db: Session = Depends(get_db)):
     dr_override = _db_get(db, "directed_report_system_prompt") or ""
     summary_override = _db_get(db, "summary_system_prompt") or ""
     art_sum_override = _db_get(db, "article_summarize_prompt") or ""
+    stock_override = _db_get(db, "stock_system_prompt") or ""
     chat_effective = chat_override if chat_override.strip() else DEFAULT_CHAT_SYSTEM_PROMPT
     ask_effective = ask_override if ask_override.strip() else DEFAULT_ASK_SYSTEM_PROMPT
     dr_effective = dr_override if dr_override.strip() else DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT
     summary_effective = summary_override if summary_override.strip() else DEFAULT_SUMMARY_SYSTEM_PROMPT
     art_sum_effective = art_sum_override if art_sum_override.strip() else DEFAULT_ARTICLE_SUMMARIZE_PROMPT
+    stock_effective = stock_override if stock_override.strip() else DEFAULT_STOCK_SYSTEM_PROMPT
 
     auto_override = _db_get(db, "auto_analyze_enabled")
     if auto_override is not None:
@@ -154,6 +157,9 @@ def get_settings(db: Session = Depends(get_db)):
         article_summarize_prompt=art_sum_effective,
         article_summarize_prompt_default=DEFAULT_ARTICLE_SUMMARIZE_PROMPT,
         article_summarize_prompt_customized=bool(art_sum_override.strip()),
+        stock_system_prompt=stock_effective,
+        stock_system_prompt_default=DEFAULT_STOCK_SYSTEM_PROMPT,
+        stock_system_prompt_customized=bool(stock_override.strip()),
         auto_analyze_enabled=auto_analyze,
         fetch_interval_minutes=fetch_interval,
         auto_tag_interval_minutes=auto_tag_interval,
@@ -325,7 +331,7 @@ def set_quick_tickers(body: QuickTickersIn, db: Session = Depends(get_db)):
 
 _RESETTABLE_KEYS = {
     "chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt",
-    "summary_system_prompt", "article_summarize_prompt",
+    "summary_system_prompt", "article_summarize_prompt", "stock_system_prompt",
     "custom_ai_endpoint", "custom_ai_model",
     "entertainment_keywords",
 }
@@ -351,7 +357,8 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
 
     _no_strip = {
         "chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt",
-        "summary_system_prompt", "article_summarize_prompt", "entertainment_keywords",
+        "summary_system_prompt", "article_summarize_prompt", "stock_system_prompt",
+        "entertainment_keywords",
     }
     _bool_keys = {"auto_analyze_enabled"}
     _int_keys = {"fetch_interval_minutes", "auto_tag_interval_minutes"}

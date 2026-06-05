@@ -78,6 +78,7 @@ class StockAnalysisOut(BaseModel):
     related_article_ids: Optional[List[int]] = None
     price_history: Optional[List[Dict[str, Any]]] = None
     quote_snapshot: Optional[Dict[str, Any]] = None
+    references: Optional[List[Dict[str, Any]]] = None
 
     class Config:
         from_attributes = True
@@ -186,6 +187,7 @@ class SettingsUpdate(BaseModel):
     directed_report_system_prompt: Optional[str] = None
     summary_system_prompt: Optional[str] = None
     article_summarize_prompt: Optional[str] = None
+    stock_system_prompt: Optional[str] = None
     auto_analyze_enabled: Optional[bool] = None
     fetch_interval_minutes: Optional[int] = None
     auto_tag_interval_minutes: Optional[int] = None
@@ -232,6 +234,9 @@ class AppSettingsOut(BaseModel):
     article_summarize_prompt: str
     article_summarize_prompt_default: str
     article_summarize_prompt_customized: bool
+    stock_system_prompt: str
+    stock_system_prompt_default: str
+    stock_system_prompt_customized: bool
     auto_analyze_enabled: bool
     fetch_interval_minutes: int
     auto_tag_interval_minutes: int

@@ -69,6 +69,7 @@ export default function SettingsPage() {
         directed_report_system_prompt: s.directed_report_system_prompt_customized ? s.directed_report_system_prompt : '',
         summary_system_prompt: s.summary_system_prompt_customized ? s.summary_system_prompt : '',
         article_summarize_prompt: s.article_summarize_prompt_customized ? s.article_summarize_prompt : '',
+        stock_system_prompt: s.stock_system_prompt_customized ? s.stock_system_prompt : '',
         fetch_interval_minutes: s.fetch_interval_minutes,
         auto_tag_interval_minutes: s.auto_tag_interval_minutes,
         entertainment_keywords: s.entertainment_keywords_customized ? s.entertainment_keywords : '',
@@ -386,6 +387,16 @@ export default function SettingsPage() {
                 defaultValue={settings?.article_summarize_prompt_default || ''}
                 customized={settings?.article_summarize_prompt_customized || false}
                 onReset={() => resetKey('article_summarize_prompt')}
+              />
+              <PromptField
+                label="Stock Reviews"
+                hint="System prompt for the Stock Reviews analyzer. Must instruct the model to return only the required JSON object — keep that constraint if you customize it."
+                fieldKey="stock_system_prompt"
+                form={form}
+                set={set}
+                defaultValue={settings?.stock_system_prompt_default || ''}
+                customized={settings?.stock_system_prompt_customized || false}
+                onReset={() => resetKey('stock_system_prompt')}
               />
             </div>
           </Card>
@@ -918,7 +929,7 @@ function PromptField({
 }: {
   label: string
   hint: string
-  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt' | 'summary_system_prompt' | 'article_summarize_prompt' | 'entertainment_keywords'
+  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt' | 'summary_system_prompt' | 'article_summarize_prompt' | 'stock_system_prompt' | 'entertainment_keywords'
   form: SettingsUpdate
   set: (k: keyof SettingsUpdate, v: string | boolean | number) => void
   defaultValue: string

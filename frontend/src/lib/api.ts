@@ -273,6 +273,7 @@ export interface StockAnalysis {
   catalysts: string[]
   price_history: StockPricePoint[]
   quote_snapshot: Record<string, unknown>
+  references?: { title?: string; url?: string; source?: string; snippet?: string }[]
 }
 
 export interface KeyStatus {
@@ -315,6 +316,9 @@ export interface AppSettingsOut {
   article_summarize_prompt: string
   article_summarize_prompt_default: string
   article_summarize_prompt_customized: boolean
+  stock_system_prompt: string
+  stock_system_prompt_default: string
+  stock_system_prompt_customized: boolean
   auto_analyze_enabled: boolean
   fetch_interval_minutes: number
   auto_tag_interval_minutes: number
@@ -348,6 +352,7 @@ export interface SettingsUpdate {
   directed_report_system_prompt?: string
   summary_system_prompt?: string
   article_summarize_prompt?: string
+  stock_system_prompt?: string
   auto_analyze_enabled?: boolean
   fetch_interval_minutes?: number
   auto_tag_interval_minutes?: number
@@ -951,8 +956,12 @@ export const stocksApi = {
     return request<StockPricePoint[]>(`/stocks/${encodeURIComponent(ticker)}/history`)
   },
 
-  analyze(ticker: string) {
-    return request<StockAnalysis>(`/stocks/${encodeURIComponent(ticker)}/analyze`, {
+  analyze(ticker: string, opts?: { include_web?: boolean; include_web_search?: boolean }) {
+    const qp = new URLSearchParams()
+    if (opts?.include_web) qp.set('include_web', 'true')
+    if (opts?.include_web_search) qp.set('include_web_search', 'true')
+    const qs = qp.toString()
+    return request<StockAnalysis>(`/stocks/${encodeURIComponent(ticker)}/analyze${qs ? '?' + qs : ''}`, {
       method: 'POST',
     })
   },

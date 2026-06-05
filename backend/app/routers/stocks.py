@@ -79,10 +79,19 @@ async def stock_history(
 
 
 @router.post("/{ticker}/analyze", response_model=StockAnalysisOut)
-async def analyze_stock_endpoint(ticker: str, db: Session = Depends(get_db)):
+async def analyze_stock_endpoint(
+    ticker: str,
+    include_web: bool = Query(False, description="Use AI-native web grounding"),
+    include_web_search: bool = Query(False, description="Run explicit multi-engine web search"),
+    db: Session = Depends(get_db),
+):
     """Run full AI analysis for a ticker and store the result."""
     try:
-        result = await analyze_stock(ticker.upper(), db)
+        result = await analyze_stock(
+            ticker.upper(), db,
+            include_web=include_web,
+            include_web_search=include_web_search,
+        )
     except Exception as exc:
         logger.error("Stock analysis failed for %s: %s", ticker, exc)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}")

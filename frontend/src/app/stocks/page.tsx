@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { stocksApi, settingsApi, type StockAnalysis } from '@/lib/api'
 import StockCard from '@/components/StockCard'
-import { Search, Loader2, TrendingUp, Plus, X } from 'lucide-react'
+import { Search, Loader2, TrendingUp, Plus, X, Sparkles, Globe } from 'lucide-react'
+import clsx from 'clsx'
 
 export default function StocksPage() {
   const [query, setQuery] = useState('')
@@ -16,6 +17,8 @@ export default function StocksPage() {
   const [quickTickers, setQuickTickers] = useState<string[]>([])
   const [newTicker, setNewTicker] = useState('')
   const [editTickers, setEditTickers] = useState(false)
+  const [aiGrounding, setAiGrounding] = useState(false)
+  const [webSearch, setWebSearch] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -73,7 +76,10 @@ export default function StocksPage() {
     setError('')
     setShowSuggestions(false)
     try {
-      const res = await stocksApi.analyze(ticker.toUpperCase())
+      const res = await stocksApi.analyze(ticker.toUpperCase(), {
+        include_web: aiGrounding || undefined,
+        include_web_search: webSearch || undefined,
+      })
       setAnalysis(res)
       const updated = await stocksApi.getAnalyses()
       setRecentAnalyses(updated)
@@ -178,6 +184,33 @@ export default function StocksPage() {
           className="px-2.5 py-1.5 text-xs text-slate-500 hover:text-white border border-dashed border-[#1e2433] hover:border-indigo-500/50 rounded-lg transition-colors"
         >
           {editTickers ? 'Done' : 'Edit'}
+        </button>
+      </div>
+
+      {/* Grounding toggles */}
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        <span className="text-[11px] text-slate-600 uppercase tracking-wider mr-1">Grounding:</span>
+        <button
+          onClick={() => setAiGrounding(v => !v)}
+          title="Let the AI provider use its built-in web search (Gemini / Anthropic)"
+          className={clsx(
+            'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors',
+            aiGrounding ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-300' : 'border-[#1e2433] text-slate-400 hover:text-white',
+          )}
+        >
+          <Sparkles size={12} /> AI web grounding
+          <span className={clsx('text-[10px]', aiGrounding ? 'text-indigo-300' : 'text-slate-600')}>{aiGrounding ? 'ON' : 'OFF'}</span>
+        </button>
+        <button
+          onClick={() => setWebSearch(v => !v)}
+          title="Run an explicit multi-engine web search and feed results into the analysis"
+          className={clsx(
+            'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors',
+            webSearch ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-300' : 'border-[#1e2433] text-slate-400 hover:text-white',
+          )}
+        >
+          <Globe size={12} /> Live web search
+          <span className={clsx('text-[10px]', webSearch ? 'text-indigo-300' : 'text-slate-600')}>{webSearch ? 'ON' : 'OFF'}</span>
         </button>
       </div>
 

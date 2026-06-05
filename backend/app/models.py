@@ -74,6 +74,9 @@ class StockAnalysis(Base):
     related_article_ids = Column(JSON, default=list)
     price_history = Column(JSON, default=list)
     quote_snapshot = Column(JSON, default=dict)
+    # 'references' is a reserved SQL word → store under a safe column name,
+    # but keep the Python attribute (and API field) as `references`.
+    references = Column("grounding_references", JSON, default=list)   # [{title,url,source,snippet}]
 
 
 class AppSettings(Base):

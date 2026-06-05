@@ -104,6 +104,12 @@ DEFAULT_QUICK_TICKERS: list[str] = [
 ]
 
 
+DEFAULT_STOCK_SYSTEM_PROMPT = (
+    "You are an expert stock market and economic analyst. "
+    "Analyze the given stock data and return a JSON response only — no markdown, no commentary."
+)
+
+
 DEFAULT_SUMMARY_SYSTEM_PROMPT = """\
 Summarize the following messages. Except weather, humor and advertisements, organize the summary \
 by breaking down all subjects and topics discussed. For each subject, list relevant topics and \

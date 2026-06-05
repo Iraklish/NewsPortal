@@ -5,10 +5,18 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..models import Article, StockAnalysis
-from .ai_client import call_ai, get_current_ai_settings
+from ..config import DEFAULT_STOCK_SYSTEM_PROMPT
+from ..models import Article, AppSettings, StockAnalysis
+from .ai_client import call_ai, call_ai_grounded, get_current_ai_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _get_stock_prompt(db: Session) -> str:
+    row = db.query(AppSettings).filter(AppSettings.key == "stock_system_prompt").first()
+    if row and row.value and row.value.strip():
+        return row.value
+    return DEFAULT_STOCK_SYSTEM_PROMPT
 
 
 # ── yfinance wrappers ─────────────────────────────────────────────────────────
@@ -121,8 +129,18 @@ async def search_ticker(query: str) -> list:
     return await loop.run_in_executor(None, lambda: _sync_search_ticker(query))
 
 
-async def analyze_stock(ticker: str, db: Session) -> dict:
-    """Fetch quote + price history + related news, run AI analysis, store in DB."""
+async def analyze_stock(
+    ticker: str,
+    db: Session,
+    include_web: bool = False,
+    include_web_search: bool = False,
+) -> dict:
+    """Fetch quote + price history + related news, run AI analysis, store in DB.
+
+    include_web        → use the provider's native web grounding (Gemini/Anthropic).
+    include_web_search → run an explicit multi-engine web search and feed results in.
+    Both contribute reference links stored on the analysis record.
+    """
     ticker = ticker.upper()
 
     # Gather data concurrently
@@ -176,11 +194,33 @@ async def analyze_stock(ticker: str, db: Session) -> dict:
         )
         news_summary = f"\nRecent related news:\n{headlines}"
 
-    # Build AI prompt
-    system = (
-        "You are an expert stock market and economic analyst. "
-        "Analyze the given stock data and return a JSON response only — no markdown, no commentary."
-    )
+    # Explicit multi-engine web search (Google/DDG/Bing) — runs first if requested.
+    references: list[dict] = []
+    web_block = ""
+    if include_web_search:
+        try:
+            from .search_service import multi_engine_search
+            web_results = await multi_engine_search(f"{company_name} {ticker} stock news analysis", db=db, num=8)
+            if web_results:
+                lines = ["\n\n=== LIVE WEB SEARCH RESULTS ==="]
+                for i, r in enumerate(web_results, 1):
+                    lines.append(
+                        f"[WEB-{i}] {r.get('title') or '(no title)'}\n"
+                        f"    Source: {r.get('source') or 'web'} | {r.get('published_at') or ''}\n"
+                        f"    URL: {r.get('url')}\n"
+                        f"    {r.get('snippet') or ''}"
+                    )
+                    references.append({
+                        "title": r.get("title"), "url": r.get("url"),
+                        "source": r.get("source"), "snippet": r.get("snippet"),
+                    })
+                web_block = "\n".join(lines)
+            logger.info("[stocks] web search for %s returned %d result(s)", ticker, len(web_results))
+        except Exception as exc:
+            logger.warning("[stocks] web search failed for %s: %s", ticker, exc)
+
+    # Build AI prompt (system prompt configurable in Settings)
+    system = _get_stock_prompt(db)
 
     user = f"""Analyze the following stock and return a JSON object with exactly these fields:
 
@@ -214,10 +254,27 @@ P/E Ratio: {quote.get("pe_ratio", "N/A")}
 Beta: {quote.get("beta", "N/A")}
 {price_summary}
 {news_summary}
+{web_block}
 """
 
     try:
-        raw = await call_ai(system=system, user=user, max_tokens=2048, db=db)
+        if include_web:
+            system_grounded = (
+                system
+                + " ADDITIONALLY: use your built-in web search to ground the analysis in the "
+                "latest real-world developments, filings, analyst notes and price-moving news."
+            )
+            grounded = await call_ai_grounded(system=system_grounded, user=user, max_tokens=2048, db=db)
+            raw = grounded.text
+            for c in (grounded.citations or []):
+                if c.url:
+                    references.append({"title": c.title, "url": c.url, "source": None, "snippet": c.snippet})
+            logger.info(
+                "[stocks] AI grounding for %s used=%s, %d citation(s)",
+                ticker, grounded.provider_used_grounding, len(grounded.citations or []),
+            )
+        else:
+            raw = await call_ai(system=system, user=user, max_tokens=2048, db=db)
         import json, re
         cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
         start = cleaned.find("{")
@@ -230,6 +287,15 @@ Beta: {quote.get("beta", "N/A")}
         ai_data = {}
 
     _, model_name = await get_current_ai_settings(db)
+
+    # De-dupe references by URL, preserving order.
+    seen_urls: set[str] = set()
+    deduped_refs: list[dict] = []
+    for ref in references:
+        u = ref.get("url")
+        if u and u not in seen_urls:
+            seen_urls.add(u)
+            deduped_refs.append(ref)
 
     record = StockAnalysis(
         ticker=ticker,
@@ -252,6 +318,7 @@ Beta: {quote.get("beta", "N/A")}
         related_article_ids=related_ids,
         price_history=history,
         quote_snapshot=quote,
+        references=deduped_refs,
     )
 
     db.add(record)
@@ -281,4 +348,5 @@ Beta: {quote.get("beta", "N/A")}
         "related_article_ids": record.related_article_ids,
         "price_history": record.price_history,
         "quote_snapshot": record.quote_snapshot,
+        "references": record.references,
     }
