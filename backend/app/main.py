@@ -15,7 +15,7 @@ from .config import settings as app_settings
 from .database import SessionLocal, init_db
 from .logging_config import configure_logging
 from .routers import analysis, articles, auth, logs, mindmap, search, settings, sources, stocks, telegram, twitter, whatsapp
-from .services.background_scheduler import run_scheduler, run_auto_tag_scheduler
+from .services.background_scheduler import run_scheduler, run_auto_tag_scheduler, run_twitter_scheduler
 from .services.security import hash_password
 
 logger = logging.getLogger(__name__)
@@ -75,13 +75,16 @@ async def lifespan(app: FastAPI):
     scheduler_task = asyncio.create_task(run_scheduler())
     # Secondary scheduler: every 10 min, backfill tags for untagged articles.
     auto_tag_task = asyncio.create_task(run_auto_tag_scheduler())
+    # Twitter auto-fetch (opt-in, interval from Settings; disabled by default).
+    twitter_task = asyncio.create_task(run_twitter_scheduler())
     try:
         yield
     finally:
-        # Cancel both schedulers and wait for them to exit cleanly.
+        # Cancel schedulers and wait for them to exit cleanly.
         scheduler_task.cancel()
         auto_tag_task.cancel()
-        for task in (scheduler_task, auto_tag_task):
+        twitter_task.cancel()
+        for task in (scheduler_task, auto_tag_task, twitter_task):
             try:
                 await task
             except asyncio.CancelledError:

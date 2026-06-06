@@ -1140,6 +1140,16 @@ export const twitterApi = {
   fetchOne(id: number) {
     return request<{ new_articles: number; ids: number[] }>(`/twitter/${id}/fetch`, { method: 'POST' })
   },
+  getAutofetch() {
+    return request<{ enabled: boolean; interval_minutes: number }>('/twitter/autofetch')
+  },
+  setAutofetch(enabled: boolean, interval_minutes: number) {
+    return request<{ enabled: boolean; interval_minutes: number }>('/twitter/autofetch', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, interval_minutes }),
+    })
+  },
 }
 
 // ─── Stocks ───────────────────────────────────────────────────────────────────

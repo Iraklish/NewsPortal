@@ -510,3 +510,59 @@ async def run_auto_tag_scheduler() -> None:
             except asyncio.CancelledError:
                 logger.info("[auto-tag] backfill scheduler stopped cleanly (during error recovery)")
                 return
+
+
+# ── Twitter auto-fetch scheduler ──────────────────────────────────────────────
+
+def _twitter_autofetch_enabled(db) -> bool:
+    raw = _db_get(db, "twitter_autofetch_enabled")
+    return (raw or "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _twitter_interval(db) -> int:
+    raw = _db_get(db, "twitter_fetch_interval_minutes") or "30"
+    try:
+        return max(10, int(raw))
+    except (ValueError, TypeError):
+        return 30
+
+
+async def run_twitter_scheduler() -> None:
+    """Auto-fetch Twitter sources on an interval, only when enabled in Settings.
+
+    Both the enabled flag and the interval are read from the DB each cycle, so
+    toggling the UI takes effect without a restart. Disabled by default (Twitter
+    scraping is rate-limit sensitive). Cancelled cleanly on shutdown.
+    """
+    from .twitter_fetcher import fetch_all_twitter_sources
+
+    logger.info("[twitter] auto-fetch scheduler started (disabled until enabled in UI)")
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                interval = _twitter_interval(db)
+            finally:
+                db.close()
+            await asyncio.sleep(interval * 60)
+
+            db = SessionLocal()
+            try:
+                if not _twitter_autofetch_enabled(db):
+                    continue
+                try:
+                    n = await asyncio.wait_for(fetch_all_twitter_sources(db), timeout=10 * 60)
+                    logger.info("[twitter] auto-fetch cycle complete: %d new tweet(s)", len(n))
+                except asyncio.TimeoutError:
+                    logger.warning("[twitter] auto-fetch exceeded timeout — aborting this cycle")
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            logger.info("[twitter] auto-fetch scheduler stopped cleanly")
+            return
+        except Exception as exc:
+            logger.exception("[twitter] auto-fetch scheduler error — retry in 60s: %s", exc)
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                return

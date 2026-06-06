@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import TwitterSource
+from ..models import AppSettings, TwitterSource
 from ..schemas import (
     TwitterLoginRequest,
     TwitterSourceCreate,
@@ -80,6 +80,45 @@ async def auth_logout():
     from ..services.twitter_fetcher import logout
     logout()
     return {"authenticated": False}
+
+
+# ── Auto-fetch settings ───────────────────────────────────────────────────────
+
+def _db_get(db: Session, key: str) -> str | None:
+    row = db.query(AppSettings).filter(AppSettings.key == key).first()
+    return row.value if row else None
+
+
+def _db_set(db: Session, key: str, value: str) -> None:
+    row = db.query(AppSettings).filter(AppSettings.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(AppSettings(key=key, value=value))
+
+
+class AutofetchSettings(BaseModel):
+    enabled: bool
+    interval_minutes: int
+
+
+@router.get("/autofetch", response_model=AutofetchSettings)
+def get_autofetch(db: Session = Depends(get_db)):
+    enabled = (_db_get(db, "twitter_autofetch_enabled") or "0").strip() in ("1", "true", "yes", "on")
+    try:
+        interval = max(10, int(_db_get(db, "twitter_fetch_interval_minutes") or "30"))
+    except (ValueError, TypeError):
+        interval = 30
+    return AutofetchSettings(enabled=enabled, interval_minutes=interval)
+
+
+@router.put("/autofetch", response_model=AutofetchSettings)
+def set_autofetch(body: AutofetchSettings, db: Session = Depends(get_db)):
+    interval = max(10, min(int(body.interval_minutes), 1440))
+    _db_set(db, "twitter_autofetch_enabled", "1" if body.enabled else "0")
+    _db_set(db, "twitter_fetch_interval_minutes", str(interval))
+    db.commit()
+    return AutofetchSettings(enabled=body.enabled, interval_minutes=interval)
 
 
 # ── Source CRUD ───────────────────────────────────────────────────────────────

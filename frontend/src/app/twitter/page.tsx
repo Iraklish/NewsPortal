@@ -42,6 +42,10 @@ export default function TwitterPage() {
   const [handle, setHandle] = useState('')
   const [lookback, setLookback] = useState(24)
 
+  // auto-fetch
+  const [autofetch, setAutofetch] = useState(false)
+  const [interval, setIntervalMin] = useState(30)
+
   const authed = !!status?.authenticated
 
   const loadSources = useCallback(() => { twitterApi.list().then(setSources).catch(() => {}) }, [])
@@ -49,7 +53,18 @@ export default function TwitterPage() {
     twitterApi.authStatus().then(setStatus).catch(() => setStatus({ authenticated: false, error: 'unreachable' }))
   }, [])
 
-  useEffect(() => { loadStatus(); loadSources() }, [loadStatus, loadSources])
+  useEffect(() => {
+    loadStatus(); loadSources()
+    twitterApi.getAutofetch().then(a => { setAutofetch(a.enabled); setIntervalMin(a.interval_minutes) }).catch(() => {})
+  }, [loadStatus, loadSources])
+
+  async function saveAutofetch(enabled: boolean, mins: number) {
+    setAutofetch(enabled); setIntervalMin(mins)
+    try {
+      const r = await twitterApi.setAutofetch(enabled, mins)
+      setAutofetch(r.enabled); setIntervalMin(r.interval_minutes)
+    } catch {}
+  }
 
   async function doLogin() {
     if (!username.trim() || !password) return
@@ -130,14 +145,34 @@ export default function TwitterPage() {
             Fetch posts from accounts, lists &amp; searches — stored as articles (category: twitter).
           </p>
         </div>
-        <button
-          onClick={fetchAll}
-          disabled={fetching || !authed}
-          className="flex items-center gap-2 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 rounded-lg text-sm text-white font-medium transition-colors"
-        >
-          {fetching ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-          Fetch now
-        </button>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#0d1117] border border-[#1e2433] rounded-lg">
+            <button
+              onClick={() => saveAutofetch(!autofetch, interval)}
+              title="Automatically fetch on an interval"
+              className={clsx('relative w-9 h-5 rounded-full transition-colors flex-shrink-0', autofetch ? 'bg-sky-600' : 'bg-[#1e2433]')}
+            >
+              <span className={clsx('absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all', autofetch ? 'left-[18px]' : 'left-0.5')} />
+            </button>
+            <span className="text-xs text-slate-400">Auto-fetch</span>
+            <input
+              type="number" min={10} max={1440} value={interval}
+              onChange={e => setIntervalMin(Math.max(10, Math.min(1440, parseInt(e.target.value) || 10)))}
+              onBlur={() => saveAutofetch(autofetch, interval)}
+              disabled={!autofetch}
+              className="w-14 bg-[#0a0f1e] border border-[#1e2433] rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-sky-500/50 disabled:opacity-40"
+            />
+            <span className="text-xs text-slate-500">min</span>
+          </div>
+          <button
+            onClick={fetchAll}
+            disabled={fetching || !authed}
+            className="flex items-center gap-2 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 rounded-lg text-sm text-white font-medium transition-colors"
+          >
+            {fetching ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            Fetch now
+          </button>
+        </div>
       </div>
       {fetchMsg && <p className="text-xs text-sky-300 mb-4">{fetchMsg}</p>}
 
