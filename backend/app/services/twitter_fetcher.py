@@ -70,7 +70,61 @@ def _patch_twikit_transaction() -> None:
         logger.warning("[twitter] could not patch twikit transaction: %s", exc)
 
 
+_USER_LEGACY_DEFAULTS = {
+    "created_at": None, "name": "", "screen_name": "", "profile_image_url_https": None,
+    "location": "", "description": "", "pinned_tweet_ids_str": [],
+    "verified": False, "possibly_sensitive": False, "can_dm": False, "can_media_tag": False,
+    "want_retweets": False, "default_profile": False, "default_profile_image": False,
+    "has_custom_timelines": False, "followers_count": 0, "fast_followers_count": 0,
+    "normal_followers_count": 0, "friends_count": 0, "favourites_count": 0, "listed_count": 0,
+    "media_count": 0, "statuses_count": 0, "is_translator": False, "translator_type": "",
+    "withheld_in_countries": [],
+}
+
+
+def _patch_twikit_user() -> None:
+    """X has dropped/relocated many ``legacy`` user fields (e.g. empty
+    ``entities.description``, missing ``pinned_tweet_ids_str``), but twikit reads
+    them directly and KeyErrors. Fill missing fields with safe defaults so a
+    User parses; we mainly need the user id.
+    """
+    try:
+        import twikit.user as _U
+        _orig_init = _U.User.__init__
+
+        def _init(self, client, data):
+            try:
+                if isinstance(data, dict):
+                    data.setdefault("is_blue_verified", False)
+                    legacy = data.setdefault("legacy", {})
+                    if isinstance(legacy, dict):
+                        # Pull name/screen_name from core if legacy lost them (newer X format).
+                        core = (data.get("core") or {})
+                        for k in ("name", "screen_name"):
+                            if not legacy.get(k) and core.get(k):
+                                legacy[k] = core[k]
+                        for k, v in _USER_LEGACY_DEFAULTS.items():
+                            legacy.setdefault(k, list(v) if isinstance(v, list) else v)
+                        ent = legacy.setdefault("entities", {})
+                        if isinstance(ent, dict):
+                            desc = ent.setdefault("description", {})
+                            if isinstance(desc, dict):
+                                desc.setdefault("urls", [])
+                            url = ent.get("url")
+                            if isinstance(url, dict):
+                                url.setdefault("urls", [])
+            except Exception:
+                pass
+            _orig_init(self, client, data)
+
+        _U.User.__init__ = _init
+        logger.info("[twitter] applied twikit User legacy-defaults patch")
+    except Exception as exc:
+        logger.warning("[twitter] could not patch twikit User: %s", exc)
+
+
 _patch_twikit_transaction()
+_patch_twikit_user()
 
 
 def _get_lock() -> asyncio.Lock:
@@ -149,15 +203,26 @@ async def _client_with_cookies():
 
 
 async def check_auth() -> dict:
-    """Best-effort check that the stored X session still works."""
+    """Report whether a stored session exists.
+
+    We intentionally do NOT make a live X call here: X's Cloudflare anti-bot can
+    reject the probe even when the cookies are valid, which would wrongly show
+    the UI as logged out. The real validity test is an actual fetch, whose error
+    is surfaced to the user.
+    """
+    return {"authenticated": _COOKIES_PATH.exists()}
+
+
+async def verify_session() -> dict:
+    """Live check that the stored session can read from X (used post cookie-set)."""
     if not _COOKIES_PATH.exists():
-        return {"authenticated": False}
+        return {"ok": False, "error": "no session"}
     try:
         client = await _client_with_cookies()
-        await client.get_user_by_screen_name("x")
-        return {"authenticated": True}
+        await client.get_user_by_screen_name("X")
+        return {"ok": True}
     except Exception as exc:
-        return {"authenticated": False, "error": str(exc)[:200]}
+        return {"ok": False, "error": str(exc)[:300]}
 
 
 def _media_urls(tweet) -> list[str]:

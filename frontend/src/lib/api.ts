@@ -1105,7 +1105,7 @@ export const twitterApi = {
     })
   },
   loginWithCookies(auth_token: string, ct0: string) {
-    return request<{ authenticated: boolean }>('/twitter/auth/cookies', {
+    return request<{ authenticated: boolean; verified?: boolean; warning?: string }>('/twitter/auth/cookies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ auth_token, ct0 }),

@@ -67,8 +67,11 @@ export default function TwitterPage() {
     if (!authToken.trim() || !ct0.trim()) return
     setLoggingIn(true); setError('')
     try {
-      await twitterApi.loginWithCookies(authToken.trim(), ct0.trim())
+      const r = await twitterApi.loginWithCookies(authToken.trim(), ct0.trim())
       setAuthToken(''); setCt0('')
+      if (r.verified === false && r.warning) {
+        setError(`Cookies saved, but X blocked the test read: ${r.warning}. Try "Fetch now" — it may still work, or fetch fails the same way (X anti-bot).`)
+      }
       loadStatus()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Cookie sign-in failed')
