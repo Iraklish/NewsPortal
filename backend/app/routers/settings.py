@@ -16,6 +16,8 @@ from ..config import (
     DEFAULT_CHAT_SYSTEM_PROMPT,
     DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT,
     DEFAULT_ENTERTAINMENT_KEYWORDS_STR,
+    DEFAULT_IMAGE_ANALYSIS_PROMPT,
+    DEFAULT_LINK_ANALYSIS_PROMPT,
     DEFAULT_QUICK_TICKERS,
     DEFAULT_STOCK_SYSTEM_PROMPT,
     DEFAULT_SUMMARY_PRESETS,
@@ -104,12 +106,16 @@ def get_settings(db: Session = Depends(get_db)):
     summary_override = _db_get(db, "summary_system_prompt") or ""
     art_sum_override = _db_get(db, "article_summarize_prompt") or ""
     stock_override = _db_get(db, "stock_system_prompt") or ""
+    img_override = _db_get(db, "image_analysis_prompt") or ""
+    link_override = _db_get(db, "link_analysis_prompt") or ""
     chat_effective = chat_override if chat_override.strip() else DEFAULT_CHAT_SYSTEM_PROMPT
     ask_effective = ask_override if ask_override.strip() else DEFAULT_ASK_SYSTEM_PROMPT
     dr_effective = dr_override if dr_override.strip() else DEFAULT_DIRECTED_REPORT_SYSTEM_PROMPT
     summary_effective = summary_override if summary_override.strip() else DEFAULT_SUMMARY_SYSTEM_PROMPT
     art_sum_effective = art_sum_override if art_sum_override.strip() else DEFAULT_ARTICLE_SUMMARIZE_PROMPT
     stock_effective = stock_override if stock_override.strip() else DEFAULT_STOCK_SYSTEM_PROMPT
+    img_effective = img_override if img_override.strip() else DEFAULT_IMAGE_ANALYSIS_PROMPT
+    link_effective = link_override if link_override.strip() else DEFAULT_LINK_ANALYSIS_PROMPT
 
     auto_override = _db_get(db, "auto_analyze_enabled")
     if auto_override is not None:
@@ -162,6 +168,12 @@ def get_settings(db: Session = Depends(get_db)):
         stock_system_prompt=stock_effective,
         stock_system_prompt_default=DEFAULT_STOCK_SYSTEM_PROMPT,
         stock_system_prompt_customized=bool(stock_override.strip()),
+        image_analysis_prompt=img_effective,
+        image_analysis_prompt_default=DEFAULT_IMAGE_ANALYSIS_PROMPT,
+        image_analysis_prompt_customized=bool(img_override.strip()),
+        link_analysis_prompt=link_effective,
+        link_analysis_prompt_default=DEFAULT_LINK_ANALYSIS_PROMPT,
+        link_analysis_prompt_customized=bool(link_override.strip()),
         auto_analyze_enabled=auto_analyze,
         fetch_interval_minutes=fetch_interval,
         auto_tag_interval_minutes=auto_tag_interval,
@@ -400,6 +412,7 @@ def set_analysis_focus_presets(body: SummaryPresetsIn, db: Session = Depends(get
 _RESETTABLE_KEYS = {
     "chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt",
     "summary_system_prompt", "article_summarize_prompt", "stock_system_prompt",
+    "image_analysis_prompt", "link_analysis_prompt",
     "custom_ai_endpoint", "custom_ai_model",
     "entertainment_keywords",
 }
@@ -426,7 +439,7 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
     _no_strip = {
         "chat_system_prompt", "ask_system_prompt", "directed_report_system_prompt",
         "summary_system_prompt", "article_summarize_prompt", "stock_system_prompt",
-        "entertainment_keywords",
+        "image_analysis_prompt", "link_analysis_prompt", "entertainment_keywords",
     }
     _bool_keys = {"auto_analyze_enabled"}
     _int_keys = {"fetch_interval_minutes", "auto_tag_interval_minutes"}

@@ -189,6 +189,8 @@ class SettingsUpdate(BaseModel):
     summary_system_prompt: Optional[str] = None
     article_summarize_prompt: Optional[str] = None
     stock_system_prompt: Optional[str] = None
+    image_analysis_prompt: Optional[str] = None
+    link_analysis_prompt: Optional[str] = None
     auto_analyze_enabled: Optional[bool] = None
     fetch_interval_minutes: Optional[int] = None
     auto_tag_interval_minutes: Optional[int] = None
@@ -238,6 +240,12 @@ class AppSettingsOut(BaseModel):
     stock_system_prompt: str
     stock_system_prompt_default: str
     stock_system_prompt_customized: bool
+    image_analysis_prompt: str
+    image_analysis_prompt_default: str
+    image_analysis_prompt_customized: bool
+    link_analysis_prompt: str
+    link_analysis_prompt_default: str
+    link_analysis_prompt_customized: bool
     auto_analyze_enabled: bool
     fetch_interval_minutes: int
     auto_tag_interval_minutes: int

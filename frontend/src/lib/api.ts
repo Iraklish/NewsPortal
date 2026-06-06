@@ -329,6 +329,12 @@ export interface AppSettingsOut {
   stock_system_prompt: string
   stock_system_prompt_default: string
   stock_system_prompt_customized: boolean
+  image_analysis_prompt: string
+  image_analysis_prompt_default: string
+  image_analysis_prompt_customized: boolean
+  link_analysis_prompt: string
+  link_analysis_prompt_default: string
+  link_analysis_prompt_customized: boolean
   auto_analyze_enabled: boolean
   fetch_interval_minutes: number
   auto_tag_interval_minutes: number
@@ -363,6 +369,8 @@ export interface SettingsUpdate {
   summary_system_prompt?: string
   article_summarize_prompt?: string
   stock_system_prompt?: string
+  image_analysis_prompt?: string
+  link_analysis_prompt?: string
   auto_analyze_enabled?: boolean
   fetch_interval_minutes?: number
   auto_tag_interval_minutes?: number

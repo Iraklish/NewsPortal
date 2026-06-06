@@ -70,6 +70,8 @@ export default function SettingsPage() {
         summary_system_prompt: s.summary_system_prompt_customized ? s.summary_system_prompt : '',
         article_summarize_prompt: s.article_summarize_prompt_customized ? s.article_summarize_prompt : '',
         stock_system_prompt: s.stock_system_prompt_customized ? s.stock_system_prompt : '',
+        image_analysis_prompt: s.image_analysis_prompt_customized ? s.image_analysis_prompt : '',
+        link_analysis_prompt: s.link_analysis_prompt_customized ? s.link_analysis_prompt : '',
         fetch_interval_minutes: s.fetch_interval_minutes,
         auto_tag_interval_minutes: s.auto_tag_interval_minutes,
         entertainment_keywords: s.entertainment_keywords_customized ? s.entertainment_keywords : '',
@@ -397,6 +399,26 @@ export default function SettingsPage() {
                 defaultValue={settings?.stock_system_prompt_default || ''}
                 customized={settings?.stock_system_prompt_customized || false}
                 onReset={() => resetKey('stock_system_prompt')}
+              />
+              <PromptField
+                label="Image analysis"
+                hint="Used by the per-article 'Analyze image' button (AI vision). A language instruction is appended automatically for non-English."
+                fieldKey="image_analysis_prompt"
+                form={form}
+                set={set}
+                defaultValue={settings?.image_analysis_prompt_default || ''}
+                customized={settings?.image_analysis_prompt_customized || false}
+                onReset={() => resetKey('image_analysis_prompt')}
+              />
+              <PromptField
+                label="Link analysis"
+                hint="Used by the per-article 'Analyze link' button (fetches the linked page). A language instruction is appended automatically for non-English."
+                fieldKey="link_analysis_prompt"
+                form={form}
+                set={set}
+                defaultValue={settings?.link_analysis_prompt_default || ''}
+                customized={settings?.link_analysis_prompt_customized || false}
+                onReset={() => resetKey('link_analysis_prompt')}
               />
             </div>
           </Card>
@@ -929,7 +951,7 @@ function PromptField({
 }: {
   label: string
   hint: string
-  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt' | 'summary_system_prompt' | 'article_summarize_prompt' | 'stock_system_prompt' | 'entertainment_keywords'
+  fieldKey: 'chat_system_prompt' | 'ask_system_prompt' | 'directed_report_system_prompt' | 'summary_system_prompt' | 'article_summarize_prompt' | 'stock_system_prompt' | 'image_analysis_prompt' | 'link_analysis_prompt' | 'entertainment_keywords'
   form: SettingsUpdate
   set: (k: keyof SettingsUpdate, v: string | boolean | number) => void
   defaultValue: string

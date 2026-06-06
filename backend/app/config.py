@@ -130,6 +130,19 @@ DEFAULT_QUICK_TICKERS: list[str] = [
 ]
 
 
+DEFAULT_IMAGE_ANALYSIS_PROMPT = (
+    "You are a visual analyst. Describe and analyze the image in the context of the news "
+    "post it accompanies. Note what is shown, any text/figures/logos/people visible, what it "
+    "implies, and whether it supports or adds to the post. Be concrete and concise."
+)
+
+DEFAULT_LINK_ANALYSIS_PROMPT = (
+    "You are an expert news analyst. Summarize and analyze the linked article: the key facts, "
+    "who is involved, why it matters, and its economic/market/geopolitical implications. Be "
+    "concrete with numbers, names and dates."
+)
+
+
 DEFAULT_STOCK_SYSTEM_PROMPT = (
     "You are an expert stock market and economic analyst. "
     "Analyze the given stock data and return a JSON response only — no markdown, no commentary."

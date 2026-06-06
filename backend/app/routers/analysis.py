@@ -9,7 +9,13 @@ from pydantic import BaseModel
 from sqlalchemy import and_, or_, text as sa_text
 from sqlalchemy.orm import Session
 
-from ..config import DEFAULT_ASK_SYSTEM_PROMPT, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_SUMMARY_SYSTEM_PROMPT
+from ..config import (
+    DEFAULT_ASK_SYSTEM_PROMPT,
+    DEFAULT_CHAT_SYSTEM_PROMPT,
+    DEFAULT_IMAGE_ANALYSIS_PROMPT,
+    DEFAULT_LINK_ANALYSIS_PROMPT,
+    DEFAULT_SUMMARY_SYSTEM_PROMPT,
+)
 from ..database import get_db
 from ..models import Analysis, AppSettings, Article, DirectedReport
 from ..schemas import (
@@ -787,11 +793,7 @@ async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db
         image_bytes, mime = await _load_image(article.image_url)
         if not image_bytes:
             raise HTTPException(status_code=502, detail="Could not load the post image")
-        system = (
-            "You are a visual analyst. Describe and analyze the image in the context of the news "
-            "post it accompanies. Note what is shown, any text/figures/logos/people visible, what it "
-            "implies, and whether it supports or adds to the post. Be concrete and concise." + lang_clause
-        )
+        system = _get_prompt(db, "image_analysis_prompt", DEFAULT_IMAGE_ANALYSIS_PROMPT) + lang_clause
         ctx = (article.content or article.title or "").strip()[:1500]
         user = f"Post text for context:\n{ctx}\n\nAnalyze the attached image."
         try:
@@ -815,11 +817,7 @@ async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db
         if page.get("status") != "ok" or not (page.get("content") or "").strip():
             raise HTTPException(status_code=502, detail=page.get("error") or "Could not read the linked page")
         content = (page.get("content") or "")[:8000]
-        system = (
-            "You are an expert news analyst. Summarize and analyze the linked article: the key facts, "
-            "who is involved, why it matters, and its economic/market/geopolitical implications. Be "
-            "concrete with numbers, names and dates." + lang_clause
-        )
+        system = _get_prompt(db, "link_analysis_prompt", DEFAULT_LINK_ANALYSIS_PROMPT) + lang_clause
         user = (
             f"Source link: {url}\n"
             f"Title: {page.get('title') or '(unknown)'}\n\n"
