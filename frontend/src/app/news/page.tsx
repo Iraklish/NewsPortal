@@ -1052,12 +1052,7 @@ function TagsEditor({
   const [tags, setTags] = useState<string[]>(initialTags || [])
   const [inputVal, setInputVal] = useState('')
   const [autoTagging, setAutoTagging] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
-
-  // Collapse by default on small (mobile) viewports to save vertical space.
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 640) setCollapsed(true)
-  }, [])
+  const [collapsed, setCollapsed] = useState(true)   // Topic Tags collapsed by default
 
   async function saveTags(newTags: string[]) {
     setTags(newTags)
