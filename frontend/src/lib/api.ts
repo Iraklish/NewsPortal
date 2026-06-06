@@ -1104,6 +1104,13 @@ export const twitterApi = {
       body: JSON.stringify(body),
     })
   },
+  loginWithCookies(auth_token: string, ct0: string) {
+    return request<{ authenticated: boolean }>('/twitter/auth/cookies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auth_token, ct0 }),
+    })
+  },
   logout() {
     return request<{ authenticated: boolean }>('/twitter/auth/logout', { method: 'POST' })
   },

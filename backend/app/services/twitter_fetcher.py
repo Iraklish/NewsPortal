@@ -119,6 +119,20 @@ async def login(username: str, email: str | None, password: str, totp_secret: st
     return True
 
 
+async def login_with_cookies(auth_token: str, ct0: str) -> bool:
+    """Authenticate using cookies copied from a browser session — bypasses the
+    Cloudflare-protected login flow. Needs at least auth_token and ct0."""
+    auth_token = (auth_token or "").strip()
+    ct0 = (ct0 or "").strip()
+    if not auth_token or not ct0:
+        raise ValueError("Both auth_token and ct0 cookies are required")
+    client = _new_client()
+    async with _get_lock():
+        client.set_cookies({"auth_token": auth_token, "ct0": ct0})
+        client.save_cookies(str(_COOKIES_PATH))
+    return True
+
+
 def logout() -> None:
     try:
         _COOKIES_PATH.unlink(missing_ok=True)

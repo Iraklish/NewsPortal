@@ -28,10 +28,13 @@ export default function TwitterPage() {
   const [error, setError] = useState('')
 
   // login form
+  const [authMode, setAuthMode] = useState<'cookies' | 'password'>('cookies')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [totp, setTotp] = useState('')
+  const [authToken, setAuthToken] = useState('')
+  const [ct0, setCt0] = useState('')
   const [loggingIn, setLoggingIn] = useState(false)
 
   // add source form
@@ -57,6 +60,18 @@ export default function TwitterPage() {
       loadStatus()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Login failed')
+    } finally { setLoggingIn(false) }
+  }
+
+  async function doCookieLogin() {
+    if (!authToken.trim() || !ct0.trim()) return
+    setLoggingIn(true); setError('')
+    try {
+      await twitterApi.loginWithCookies(authToken.trim(), ct0.trim())
+      setAuthToken(''); setCt0('')
+      loadStatus()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Cookie sign-in failed')
     } finally { setLoggingIn(false) }
   }
 
@@ -133,22 +148,39 @@ export default function TwitterPage() {
             </button>
           </div>
         ) : (
-          <div className="space-y-2">
-            <p className="text-xs text-slate-400">Sign in with your X account (used once — only the session is saved, not your password).</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username (or @handle)" className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50" />
-              <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email (if asked)" className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50" />
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" autoComplete="off" className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50" />
-              <input value={totp} onChange={e => setTotp(e.target.value)} placeholder="2FA key (secret, not a code) — optional" className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50" />
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <button onClick={() => setAuthMode('cookies')} className={clsx('px-3 py-1.5 rounded-lg text-xs border transition-colors', authMode === 'cookies' ? 'border-sky-500/40 bg-sky-500/10 text-sky-300' : 'border-[#1e2433] text-slate-400 hover:text-white')}>Cookies (recommended)</button>
+              <button onClick={() => setAuthMode('password')} className={clsx('px-3 py-1.5 rounded-lg text-xs border transition-colors', authMode === 'password' ? 'border-sky-500/40 bg-sky-500/10 text-sky-300' : 'border-[#1e2433] text-slate-400 hover:text-white')}>Username &amp; password</button>
             </div>
-            <p className="text-[10px] text-slate-600">
-              Only fill 2FA if your account uses an <span className="text-slate-400">authenticator app</span>, and paste the
-              <span className="text-slate-400"> setup key/secret</span> (a long string like <span className="font-mono">JBSWY3DPEHPK3PXP</span>) — not the rotating 6-digit code.
-              X → Settings → Security → Two-factor authentication → Authentication app shows it.
-            </p>
-            <button onClick={doLogin} disabled={loggingIn || !username.trim() || !password} className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 rounded-lg text-sm text-white font-medium transition-colors">
-              {loggingIn ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Sign in
-            </button>
+
+            {authMode === 'cookies' ? (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-400">Paste your X session cookies (most reliable — X blocks automated password login via Cloudflare).</p>
+                <input value={authToken} onChange={e => setAuthToken(e.target.value)} placeholder="auth_token cookie" className="w-full bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50 font-mono" />
+                <input value={ct0} onChange={e => setCt0(e.target.value)} placeholder="ct0 cookie" className="w-full bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50 font-mono" />
+                <p className="text-[10px] text-slate-600">
+                  In your browser (logged in to x.com): DevTools → Application → Cookies → https://x.com → copy the
+                  <span className="text-slate-400 font-mono"> auth_token</span> and <span className="text-slate-400 font-mono">ct0</span> values.
+                </p>
+                <button onClick={doCookieLogin} disabled={loggingIn || !authToken.trim() || !ct0.trim()} className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 rounded-lg text-sm text-white font-medium transition-colors">
+                  {loggingIn ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Sign in with cookies
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-400">Username &amp; password (used once — only the session is saved). Often blocked by X's Cloudflare; use cookies if it fails.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username (or @handle)" className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50" />
+                  <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email (if asked)" className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50" />
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" autoComplete="off" className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50" />
+                  <input value={totp} onChange={e => setTotp(e.target.value)} placeholder="2FA key (secret, not a code) — optional" className="bg-[#0a0f1e] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50" />
+                </div>
+                <button onClick={doLogin} disabled={loggingIn || !username.trim() || !password} className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 rounded-lg text-sm text-white font-medium transition-colors">
+                  {loggingIn ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Sign in
+                </button>
+              </div>
+            )}
             <p className="text-[10px] text-amber-400/70">Unofficial scraping — against X ToS; fetch sparingly to avoid rate limits.</p>
           </div>
         )}

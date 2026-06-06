@@ -50,6 +50,31 @@ async def auth_login(body: TwitterLoginRequest):
         raise HTTPException(status_code=400, detail=f"Login failed: {exc}")
 
 
+class CookieLoginRequest(BaseModel):
+    auth_token: str
+    ct0: str
+
+
+@router.post("/auth/cookies")
+async def auth_cookies(body: CookieLoginRequest):
+    """Authenticate with browser cookies (auth_token + ct0) — avoids the
+    Cloudflare-blocked login flow."""
+    from ..services.twitter_fetcher import login_with_cookies, check_auth
+    try:
+        await login_with_cookies(body.auth_token, body.ct0)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not set cookies: {exc}")
+    # Verify the cookies actually work.
+    status = await check_auth()
+    if not status.get("authenticated"):
+        from ..services.twitter_fetcher import logout as _logout
+        _logout()
+        raise HTTPException(status_code=400, detail="Cookies were rejected by X — copy fresh auth_token and ct0 values")
+    return {"authenticated": True}
+
+
 @router.post("/auth/logout")
 async def auth_logout():
     from ..services.twitter_fetcher import logout
