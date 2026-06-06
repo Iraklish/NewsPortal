@@ -82,6 +82,19 @@ const LANG_INSTRUCTION: Record<Lang, string> = {
   German:   ' — Respond entirely in German (Deutsch).',
 }
 
+// Category dropdown order: these pinned first (in this order), then the rest A–Z.
+const CATEGORY_PRIORITY = ['telegram', 'twitter', 'israel', 'russia', 'ukraine']
+function orderCategories(cats: string[]): string[] {
+  return [...cats].sort((a, b) => {
+    const ia = CATEGORY_PRIORITY.indexOf(a)
+    const ib = CATEGORY_PRIORITY.indexOf(b)
+    if (ia !== -1 || ib !== -1) {
+      return (ia === -1 ? Infinity : ia) - (ib === -1 ? Infinity : ib)
+    }
+    return a.localeCompare(b)
+  })
+}
+
 function fmtDate(s?: string): string {
   if (!s) return ''
   const ms = s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s)
@@ -501,7 +514,7 @@ export default function NewsPage() {
           className="bg-[#0d1117] border border-[#1e2433] rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-indigo-500"
         >
           <option value="">All Categories</option>
-          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          {orderCategories(categories).map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         <select
           value={hours}
