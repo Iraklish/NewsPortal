@@ -578,8 +578,25 @@ async def ask_about_article(
     if history_lines:
         user_prompt = "Conversation so far:\n" + "\n".join(history_lines) + f"\n\nCurrent question: {body.question}"
 
+    # If the post has an image, make the chat image-aware so questions about the
+    # picture ("what's on the image?") can be answered. Falls back to text-only.
+    image_bytes, mime = (None, "image/jpeg")
+    if (article.image_url or "").strip():
+        try:
+            image_bytes, mime = await _load_image(article.image_url)
+        except Exception:
+            image_bytes = None
+
     try:
-        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+        if image_bytes:
+            vision_system = system + "\n\nAN IMAGE FROM THE POST IS ATTACHED. Use it to answer questions about the picture."
+            try:
+                response_text = await call_ai_vision(system=vision_system, user=user_prompt, image_bytes=image_bytes, mime=mime, max_tokens=1200, db=db)
+            except Exception as vexc:
+                logger.warning("Ask-article vision call failed, falling back to text: %s", vexc)
+                response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+        else:
+            response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
     except Exception as exc:
         logger.error("Ask-article AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
