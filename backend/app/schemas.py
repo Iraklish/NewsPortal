@@ -21,6 +21,7 @@ class ArticleOut(BaseModel):
     image_url: Optional[str] = None
     is_analyzed: bool = False
     tags: Optional[List[str]] = None
+    media_urls: Optional[List[str]] = None
 
     class Config:
         from_attributes = True

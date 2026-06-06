@@ -47,6 +47,8 @@ _COLUMN_MIGRATIONS = [
     ("analyses", "impact_type", "VARCHAR(16)"),
     # tags: stored as JSON (TEXT in SQLite) — language-agnostic English topic labels
     ("articles", "tags", "TEXT DEFAULT '[]'"),
+    # all media of a post (Telegram albums) as JSON list
+    ("articles", "media_urls", "TEXT DEFAULT '[]'"),
     # stock analysis grounding references (web/AI), stored as JSON
     ("stock_analyses", "grounding_references", "TEXT DEFAULT '[]'"),
 ]

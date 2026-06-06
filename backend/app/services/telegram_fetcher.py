@@ -92,6 +92,91 @@ async def _download_post_media(client, msg, channel_id: str) -> Optional[str]:
         logger.debug("[telegram] media download failed for %s/%s: %s", channel_id, msg.id, exc)
     return None
 
+
+def _group_messages(messages) -> list[list]:
+    """Group Telegram album messages (same grouped_id) into single posts.
+
+    A multi-media Telegram post arrives as several messages sharing a
+    grouped_id; only one usually carries the caption. Singles (grouped_id None)
+    stay on their own.
+    """
+    groups: list[list] = []
+    by_gid: dict = {}
+    for m in messages:
+        gid = getattr(m, "grouped_id", None)
+        if gid is None:
+            groups.append([m])
+        else:
+            g = by_gid.get(gid)
+            if g is None:
+                g = []
+                by_gid[gid] = g
+                groups.append(g)
+            g.append(m)
+    return groups
+
+
+def _group_primary(group: list):
+    """The message defining the article: the caption-bearer, else the lowest id."""
+    with_text = [m for m in group if (getattr(m, "message", "") or "").strip()]
+    pool = with_text or group
+    return min(pool, key=lambda m: m.id)
+
+
+async def _store_group(group: list, source, db, client) -> tuple[Optional[int], int]:
+    """Store one message group as a single Article with all its media.
+
+    Returns (new_article_id or None, media_downloaded_count). If the article
+    already exists, backfills its media instead of creating a duplicate.
+    """
+    primary = _group_primary(group)
+    text = (getattr(primary, "message", "") or "").strip()
+    has_media = any(_msg_has_media(m) for m in group)
+    if not text and not has_media:
+        return None, 0
+
+    u = _msg_url(source.channel_id, primary.id)
+    u_hash = url_hash(u)
+    existing = db.query(Article).filter(Article.url_hash == u_hash).first()
+
+    media_urls: list[str] = []
+    if has_media:
+        for m in sorted(group, key=lambda x: x.id):
+            if _msg_has_media(m):
+                img = await _download_post_media(client, m, source.channel_id)
+                if img:
+                    media_urls.append(img)
+
+    if existing:
+        if media_urls and not existing.media_urls:
+            existing.media_urls = media_urls
+        if media_urls and not existing.image_url:
+            existing.image_url = media_urls[0]
+        return None, 0
+
+    first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:200]
+    article = Article(
+        url=u,
+        url_hash=u_hash,
+        title=first_line or ("Media post" if has_media else None),
+        source=source.name or source.channel_id,
+        category="telegram",
+        published_at=primary.date.replace(tzinfo=None),
+        content=text,
+        image_url=media_urls[0] if media_urls else None,
+        media_urls=media_urls,
+        is_analyzed=False,
+    )
+    db.add(article)
+    try:
+        db.flush()
+        return article.id, len(media_urls)
+    except Exception:
+        db.rollback()
+        logger.warning("[telegram] failed to store group %s/%d", source.channel_id, primary.id)
+        return None, 0
+
+
 # Per-process asyncio lock — prevents concurrent access to the SQLite session file.
 _lock: Optional[asyncio.Lock] = None
 
@@ -242,59 +327,21 @@ async def fetch_telegram_channel(
                 if not result.messages:
                     break
 
+                # Keep messages within the window, then group album members so a
+                # multi-media post becomes one article holding all its media.
                 reached_cutoff = False
+                survivors = []
                 for msg in result.messages:
-                    msg_time = msg.date.replace(tzinfo=None)
-                    if msg_time < cutoff:
+                    if msg.date.replace(tzinfo=None) < cutoff:
                         reached_cutoff = True
                         break
+                    survivors.append(msg)
 
-                    text = (getattr(msg, "message", "") or "").strip()
-                    has_media = _msg_has_media(msg)
-                    if not text and not has_media:
-                        continue   # nothing to store
-
-                    u = _msg_url(source.channel_id, msg.id)
-                    u_hash = url_hash(u)
-                    existing = db.query(Article).filter(Article.url_hash == u_hash).first()
-                    if existing:
-                        # Backfill the image for a post that was stored before media
-                        # fetching existed.
-                        if not existing.image_url and _msg_has_media(msg):
-                            img = await _download_post_media(client, msg, source.channel_id)
-                            if img:
-                                existing.image_url = img
-                                media_count += 1
-                        continue   # already stored
-
-                    # First non-empty line → title (≤200 chars). Media-only posts
-                    # get a generic title so they still render as a card.
-                    first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:200]
-                    title = first_line or ("Media post" if has_media else None)
-
-                    # Download a displayable image for any media the post carries.
-                    image_url = await _download_post_media(client, msg, source.channel_id)
-                    if image_url:
-                        media_count += 1
-
-                    article = Article(
-                        url=u,
-                        url_hash=u_hash,
-                        title=title,
-                        source=source.name or source.channel_id,
-                        category="telegram",
-                        published_at=msg_time,
-                        content=text,
-                        image_url=image_url,
-                        is_analyzed=False,
-                    )
-                    db.add(article)
-                    try:
-                        db.flush()   # get the id without committing yet
-                        new_ids.append(article.id)
-                    except Exception:
-                        db.rollback()
-                        logger.warning("[telegram] failed to store msg %s/%d", source.channel_id, msg.id)
+                for group in _group_messages(survivors):
+                    aid, mc = await _store_group(group, source, db, client)
+                    media_count += mc
+                    if aid is not None:
+                        new_ids.append(aid)
 
                 try:
                     db.commit()
@@ -538,49 +585,19 @@ async def fetch_all_telegram_sources(db: Session) -> list[int]:
                         if not result.messages:
                             break
 
+                        # Keep messages within the window, then group album members.
                         reached_cutoff = False
+                        survivors = []
                         for msg in result.messages:
-                            msg_time = msg.date.replace(tzinfo=None)
-                            if msg_time < cutoff:
+                            if msg.date.replace(tzinfo=None) < cutoff:
                                 reached_cutoff = True
                                 break
+                            survivors.append(msg)
 
-                            text = (getattr(msg, "message", "") or "").strip()
-                            has_media = _msg_has_media(msg)
-                            if not text and not has_media:
-                                continue
-
-                            u = _msg_url(source.channel_id, msg.id)
-                            u_hash = url_hash(u)
-                            existing = db.query(Article).filter(Article.url_hash == u_hash).first()
-                            if existing:
-                                # Backfill image for a post stored before media fetching.
-                                if not existing.image_url and has_media:
-                                    img = await _download_post_media(client, msg, source.channel_id)
-                                    if img:
-                                        existing.image_url = img
-                                continue  # already stored
-
-                            first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:200]
-                            image_url = await _download_post_media(client, msg, source.channel_id)
-                            article = Article(
-                                url=u,
-                                url_hash=u_hash,
-                                title=first_line or ("Media post" if has_media else None),
-                                source=source.name or source.channel_id,
-                                category="telegram",
-                                published_at=msg_time,
-                                content=text,
-                                image_url=image_url,
-                                is_analyzed=False,
-                            )
-                            db.add(article)
-                            try:
-                                db.flush()
-                                new_ids.append(article.id)
-                            except Exception:
-                                db.rollback()
-                                logger.warning("[telegram] failed to store msg %s/%d", source.channel_id, msg.id)
+                        for group in _group_messages(survivors):
+                            aid, _ = await _store_group(group, source, db, client)
+                            if aid is not None:
+                                new_ids.append(aid)
 
                         try:
                             db.commit()

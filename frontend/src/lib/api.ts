@@ -153,6 +153,7 @@ export interface Article {
   image_url?: string
   is_analyzed: boolean
   tags?: string[]
+  media_urls?: string[]
 }
 
 export type ImpactType = 'highly_positive' | 'positive' | 'neutral' | 'negative' | 'highly_negative'

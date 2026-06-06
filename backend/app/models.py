@@ -25,6 +25,7 @@ class Article(Base):
     image_url = Column(String(2048))
     is_analyzed = Column(Boolean, default=False)
     tags = Column(JSON, default=list)   # list[str] — language-agnostic English topic tags
+    media_urls = Column(JSON, default=list)   # all media of a post (e.g. Telegram album); image_url is the first
 
 
 class Analysis(Base):

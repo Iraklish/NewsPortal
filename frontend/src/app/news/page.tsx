@@ -1367,16 +1367,39 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {/* Post image */}
-          {article.image_url && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={resolveMediaUrl(article.image_url)}
-              alt=""
-              className="w-full max-h-80 object-contain rounded-lg bg-[#0a0f1e] border border-[#1e2433]"
-              onError={e => (e.currentTarget.style.display = 'none')}
-            />
-          )}
+          {/* Post media — gallery of all media (Telegram albums), else single image */}
+          {(() => {
+            const media = (article.media_urls && article.media_urls.length > 0)
+              ? article.media_urls
+              : (article.image_url ? [article.image_url] : [])
+            if (media.length === 0) return null
+            if (media.length === 1) {
+              return (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={resolveMediaUrl(media[0])}
+                  alt=""
+                  className="w-full max-h-80 object-contain rounded-lg bg-[#0a0f1e] border border-[#1e2433]"
+                  onError={e => (e.currentTarget.style.display = 'none')}
+                />
+              )
+            }
+            return (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {media.map((m, i) => (
+                  <a key={i} href={resolveMediaUrl(m)} target="_blank" rel="noopener noreferrer" className="block">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={resolveMediaUrl(m)}
+                      alt=""
+                      className="w-full h-32 object-cover rounded-lg bg-[#0a0f1e] border border-[#1e2433] hover:border-indigo-500/50 transition-colors"
+                      onError={e => (e.currentTarget.style.display = 'none')}
+                    />
+                  </a>
+                ))}
+              </div>
+            )
+          })()}
           {/* Article summary / content */}
           {(article.summary || article.content) && (
             <div className="bg-[#0a0f1e] rounded-lg p-4 border border-[#1e2433]">
