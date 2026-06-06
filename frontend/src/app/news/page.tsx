@@ -721,12 +721,18 @@ export default function NewsPage() {
         </div>
       )}
 
-      {selected && (
-        <ArticleDetail
-          article={selected}
-          onClose={() => setSelected(null)}
-        />
-      )}
+      {selected && (() => {
+        const idx = articles.findIndex(a => a.id === selected.id)
+        return (
+          <ArticleDetail
+            article={selected}
+            onClose={() => setSelected(null)}
+            onPrev={idx > 0 ? () => setSelected(articles[idx - 1]) : undefined}
+            onNext={idx >= 0 && idx < articles.length - 1 ? () => setSelected(articles[idx + 1]) : undefined}
+            position={idx >= 0 ? { current: idx + 1, total: articles.length } : undefined}
+          />
+        )
+      })()}
 
       {adding && (
         <AddArticleModal
@@ -1153,7 +1159,13 @@ type TimelineItem =
   | { kind: 'pending-summarize'; id: string; at: number }
   | { kind: 'pending-factcheck'; id: string; at: number }
 
-function ArticleDetail({ article, onClose }: { article: Article; onClose: () => void }) {
+function ArticleDetail({ article, onClose, onPrev, onNext, position }: {
+  article: Article
+  onClose: () => void
+  onPrev?: () => void
+  onNext?: () => void
+  position?: { current: number; total: number }
+}) {
   // Unified timeline of user prompts, AI chat replies, and persisted analyses,
   // sorted chronologically (oldest first → newest at the bottom, chat-style).
   const [timeline, setTimeline] = useState<TimelineItem[]>([])
@@ -1196,6 +1208,18 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [timeline])
+
+  // Arrow-key navigation between articles (ignored while typing in a field).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (e.key === 'ArrowLeft' && onPrev) { e.preventDefault(); onPrev() }
+      else if (e.key === 'ArrowRight' && onNext) { e.preventDefault(); onNext() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onPrev, onNext])
 
   // Build the chat-style history for Ask requests, ignoring analysis rows.
   function chatHistory(): { role: string; content: string }[] {
@@ -1352,6 +1376,25 @@ function ArticleDetail({ article, onClose }: { article: Article; onClose: () => 
             </button>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={onPrev}
+              disabled={!onPrev}
+              title="Previous article"
+              aria-label="Previous article"
+              className="p-1.5 text-slate-500 hover:text-white hover:bg-white/10 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            {position && <span className="text-[10px] text-slate-600 tabular-nums px-0.5">{position.current}/{position.total}</span>}
+            <button
+              onClick={onNext}
+              disabled={!onNext}
+              title="Next article"
+              aria-label="Next article"
+              className="p-1.5 text-slate-500 hover:text-white hover:bg-white/10 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <ChevronRight size={16} />
+            </button>
             <button
               onClick={() => setMaximized(m => !m)}
               title={maximized ? 'Restore' : 'Maximize'}
