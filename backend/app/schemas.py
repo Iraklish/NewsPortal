@@ -363,6 +363,46 @@ class WhatsAppSourceUpdate(BaseModel):
     lookback_hours: Optional[int] = None
 
 
+# ── TwitterSource ─────────────────────────────────────────────────────────────
+
+class TwitterSourceOut(BaseModel):
+    id: int
+    handle: str
+    kind: str = "user"
+    name: Optional[str] = None
+    enabled: bool
+    lookback_hours: int
+    created_at: Optional[datetime] = None
+    last_fetched_at: Optional[datetime] = None
+    last_status: Optional[str] = None
+    last_error: Optional[str] = None
+    message_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class TwitterSourceCreate(BaseModel):
+    handle: str
+    kind: str = "user"          # user | list | search
+    name: Optional[str] = None
+    enabled: bool = True
+    lookback_hours: int = 24
+
+
+class TwitterSourceUpdate(BaseModel):
+    name: Optional[str] = None
+    enabled: Optional[bool] = None
+    lookback_hours: Optional[int] = None
+
+
+class TwitterLoginRequest(BaseModel):
+    username: str
+    email: Optional[str] = None
+    password: str
+    totp_secret: Optional[str] = None
+
+
 class MindMapOut(BaseModel):
     id: int
     subject: str

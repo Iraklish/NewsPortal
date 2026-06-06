@@ -160,6 +160,20 @@ class WhatsAppSource(Base):
     last_error = Column(Text)
 
 
+class TwitterSource(Base):
+    __tablename__ = "twitter_sources"
+    id = Column(Integer, primary_key=True, index=True)
+    handle = Column(String(256), nullable=False, index=True)   # username, list id, or search query
+    kind = Column(String(16), default="user", nullable=False)  # user | list | search
+    name = Column(String(256))
+    enabled = Column(Boolean, default=True, nullable=False)
+    lookback_hours = Column(Integer, default=24, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+    last_fetched_at = Column(DateTime)
+    last_status = Column(String(32))   # ok | empty | error
+    last_error = Column(Text)
+
+
 class RssSource(Base):
     __tablename__ = "rss_sources"
     id = Column(Integer, primary_key=True, index=True)

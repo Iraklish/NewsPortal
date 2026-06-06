@@ -14,7 +14,7 @@ from .auth_deps import get_current_user
 from .config import settings as app_settings
 from .database import SessionLocal, init_db
 from .logging_config import configure_logging
-from .routers import analysis, articles, auth, logs, mindmap, search, settings, sources, stocks, telegram, whatsapp
+from .routers import analysis, articles, auth, logs, mindmap, search, settings, sources, stocks, telegram, twitter, whatsapp
 from .services.background_scheduler import run_scheduler, run_auto_tag_scheduler
 from .services.security import hash_password
 
@@ -128,6 +128,7 @@ app.include_router(sources.router, prefix="/sources", tags=["sources"], dependen
 app.include_router(logs.router, prefix="/logs", tags=["logs"], dependencies=_protected)
 app.include_router(telegram.router, prefix="/telegram", tags=["telegram"], dependencies=_protected)
 app.include_router(whatsapp.router, prefix="/whatsapp", tags=["whatsapp"], dependencies=_protected)
+app.include_router(twitter.router, prefix="/twitter", tags=["twitter"], dependencies=_protected)
 app.include_router(search.router, prefix="/search", tags=["search"], dependencies=_protected)
 
 

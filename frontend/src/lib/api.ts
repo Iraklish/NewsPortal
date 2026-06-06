@@ -1072,6 +1072,69 @@ export const whatsappApi = {
   },
 }
 
+// ─── Twitter / X ──────────────────────────────────────────────────────────────
+
+export interface TwitterStatus {
+  authenticated: boolean
+  error?: string
+}
+
+export interface TwitterSource {
+  id: number
+  handle: string
+  kind: 'user' | 'list' | 'search' | string
+  name?: string
+  enabled: boolean
+  lookback_hours: number
+  created_at?: string
+  last_fetched_at?: string
+  last_status?: string
+  last_error?: string
+  message_count: number
+}
+
+export const twitterApi = {
+  authStatus() {
+    return request<TwitterStatus>('/twitter/auth/status')
+  },
+  login(body: { username: string; email?: string; password: string; totp_secret?: string }) {
+    return request<{ authenticated: boolean }>('/twitter/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+  logout() {
+    return request<{ authenticated: boolean }>('/twitter/auth/logout', { method: 'POST' })
+  },
+  list() {
+    return request<TwitterSource[]>('/twitter')
+  },
+  create(body: { handle: string; kind?: string; name?: string; lookback_hours?: number; enabled?: boolean }) {
+    return request<TwitterSource>('/twitter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+  update(id: number, patch: { name?: string; enabled?: boolean; lookback_hours?: number }) {
+    return request<TwitterSource>(`/twitter/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+  },
+  remove(id: number) {
+    return request<{ deleted: boolean; id: number }>(`/twitter/${id}`, { method: 'DELETE' })
+  },
+  fetchAll() {
+    return request<{ sources_fetched: number; new_articles: number }>('/twitter/fetch', { method: 'POST' })
+  },
+  fetchOne(id: number) {
+    return request<{ new_articles: number; ids: number[] }>(`/twitter/${id}/fetch`, { method: 'POST' })
+  },
+}
+
 // ─── Stocks ───────────────────────────────────────────────────────────────────
 
 export const stocksApi = {
