@@ -88,6 +88,22 @@ def _call_openai(api_key: str, model: str, system: str, user: str, max_tokens: i
     return response.choices[0].message.content
 
 
+# Disable all Gemini safety filters (equivalent to the old
+# google.generativeai SAFETY_SETTINGS = {... : BLOCK_NONE} for the new
+# google-genai SDK). Built lazily because `types` is imported per-call.
+def _gemini_safety_settings(types):
+    return [
+        types.SafetySetting(category=c, threshold="BLOCK_NONE")
+        for c in (
+            "HARM_CATEGORY_HARASSMENT",
+            "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "HARM_CATEGORY_CIVIC_INTEGRITY",
+        )
+    ]
+
+
 def _call_gemini(api_key: str, model: str, system: str, user: str, max_tokens: int) -> str:
     from google import genai
     from google.genai import types
@@ -98,6 +114,7 @@ def _call_gemini(api_key: str, model: str, system: str, user: str, max_tokens: i
         config=types.GenerateContentConfig(
             system_instruction=system,
             max_output_tokens=max_tokens,
+            safety_settings=_gemini_safety_settings(types),
         ),
     )
     return response.text
@@ -236,7 +253,11 @@ def _vision_gemini(api_key, model, system, user, image_bytes, mime, max_tokens):
     r = client.models.generate_content(
         model=model,
         contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime), user],
-        config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=max_tokens),
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            safety_settings=_gemini_safety_settings(types),
+        ),
     )
     return r.text
 
@@ -308,6 +329,7 @@ def _call_gemini_grounded(api_key: str, model: str, system: str, user: str, max_
                     system_instruction=system,
                     max_output_tokens=max_tokens,
                     tools=[tool],
+                    safety_settings=_gemini_safety_settings(types),
                 ),
             )
             break
