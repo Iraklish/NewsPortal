@@ -398,7 +398,7 @@ async def run_scheduler() -> None:
 
 # ── Secondary scheduler: backfill auto-tagging for untagged articles ──────────
 
-_AUTO_TAG_BACKFILL_CAP = 30   # max articles tagged per cycle (token-cost guard)
+_AUTO_TAG_BACKFILL_CAP = 60   # max articles tagged per cycle (token-cost guard)
 
 
 async def _run_auto_tag_backfill() -> None:
