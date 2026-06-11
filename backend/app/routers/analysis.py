@@ -426,6 +426,9 @@ class TimelineRequest(BaseModel):
     time_window_hours: int = 24           # 0 = all time (span derived from data)
     max_articles: int = 0                 # 0 = no hard cap (bounded to 20000)
     granularity: str = "auto"             # auto|15min|30min|hour|3hour|6hour|day|week
+    country: Optional[str] = None         # adjustable filter: restrict to a country
+    topic: Optional[str] = None           # adjustable filter: restrict to a topic
+    q: Optional[str] = None               # adjustable free-text filter
 
 
 # Weighted escalation/tension lexicon, matched against title + summary.
@@ -565,6 +568,25 @@ def _entity_terms(kind: str, label: str) -> list[str]:
     return src.get(label, [])
 
 
+def _apply_adjustable_filters(query, country: str | None, topic: str | None, q: str | None):
+    """AND the timeline's adjustable Country / Topic / Free-text filters onto a query."""
+    for kind, label in (("country", country), ("topic", topic)):
+        if label:
+            terms = _entity_terms(kind, label)
+            if terms:
+                conds = []
+                for t in terms:
+                    p = f"%{t}%"
+                    conds += [Article.title.ilike(p), Article.summary.ilike(p)]
+                query = query.filter(or_(*conds))
+    if q and q.strip():
+        qp = f"%{q.strip()}%"
+        query = query.filter(or_(
+            Article.title.ilike(qp), Article.summary.ilike(qp), Article.content.ilike(qp),
+        ))
+    return query
+
+
 _GRAN_SECONDS: dict[str, int] = {
     "15min": 900, "30min": 1800, "hour": 3600, "3hour": 10800,
     "6hour": 21600, "day": 86400, "week": 604800,
@@ -628,6 +650,9 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
                 ).bindparams(qtag=pat),
             ))
 
+    # Adjustable graph filters (Country / Topic / Free text).
+    query = _apply_adjustable_filters(query, body.country, body.topic, body.q)
+
     cap = body.max_articles if body.max_articles and body.max_articles > 0 else 20000
     rows = (
         query.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
@@ -648,6 +673,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
             "max_count": 0, "max_tension": 0, "max_cell": 0, "top_terms": [],
             "granularity": body.granularity, "bucket_seconds": 0,
             "start": None, "end": None,
+            "all_countries": list(_COUNTRY_TERMS), "all_topics": list(_TOPIC_TERMS),
         }
 
     times = [t for t, _ in items]
@@ -718,16 +744,19 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
         "bucket_seconds": bucket_seconds,
         "start": start.isoformat(),
         "end": end.isoformat(),
+        "all_countries": list(_COUNTRY_TERMS),
+        "all_topics": list(_TOPIC_TERMS),
     }
 
 
 class TimelineArticlesRequest(BaseModel):
     filter_type: str = "keyword"
     filter_value: str = ""
-    start: str                          # ISO timestamp (inclusive)
-    end: str                            # ISO timestamp (exclusive)
-    entity: Optional[str] = None        # heatmap row label (country / topic)
-    entity_kind: Optional[str] = None   # "country" | "topic"
+    start: str                       # ISO timestamp (inclusive)
+    end: str                         # ISO timestamp (exclusive)
+    country: Optional[str] = None    # restrict to a country
+    topic: Optional[str] = None      # restrict to a topic
+    q: Optional[str] = None          # free-text restriction
     limit: int = 100
 
 
@@ -747,16 +776,8 @@ def summary_timeline_articles(body: TimelineArticlesRequest, db: Session = Depen
         and_(Article.published_at.is_(None), Article.fetched_at >= start, Article.fetched_at < end),
     ))
 
-    # Heatmap-row entity filter: match any of the country/topic's terms in text.
-    if body.entity and body.entity_kind in ("country", "topic"):
-        terms = _entity_terms(body.entity_kind, body.entity)
-        if terms:
-            conds = []
-            for t in terms:
-                pat = f"%{t}%"
-                conds.append(Article.title.ilike(pat))
-                conds.append(Article.summary.ilike(pat))
-            query = query.filter(or_(*conds))
+    # Country / Topic / Free-text restrictions from the graph + clicked cell.
+    query = _apply_adjustable_filters(query, body.country, body.topic, body.q)
 
     fv = (body.filter_value or "").strip()
     if fv:

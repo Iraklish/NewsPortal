@@ -431,6 +431,8 @@ export interface TimelineResponse {
   bucket_seconds: number
   start: string | null
   end: string | null
+  all_countries: string[]
+  all_topics: string[]
 }
 
 export interface TimelineRequest {
@@ -439,6 +441,9 @@ export interface TimelineRequest {
   time_window_hours?: number
   max_articles?: number
   granularity?: string   // auto|15min|30min|hour|3hour|6hour|day|week
+  country?: string | null
+  topic?: string | null
+  q?: string | null
 }
 
 export interface TimelineArticle {
@@ -784,8 +789,9 @@ export const analysisApi = {
     filter_value?: string
     start: string
     end: string
-    entity?: string | null
-    entity_kind?: 'country' | 'topic' | null
+    country?: string | null
+    topic?: string | null
+    q?: string | null
     limit?: number
   }) {
     return request<{ articles: TimelineArticle[]; count: number }>('/analysis/summary/timeline/articles', {
