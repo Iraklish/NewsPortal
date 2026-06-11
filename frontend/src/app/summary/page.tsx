@@ -9,6 +9,7 @@ import { analysisApi, articlesApi, settingsApi, SummaryResponse } from '@/lib/ap
 import SummaryMarkdown from '@/components/SummaryMarkdown'
 import MessageContent from '@/components/MessageContent'
 import SummaryViewerModal from '@/components/SummaryViewerModal'
+import SummaryTimeline from '@/components/SummaryTimeline'
 import { useLanguage } from '@/lib/language'
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -523,6 +524,14 @@ export default function SummaryPage() {
               )}
             </span>
           </div>
+
+          {/* Configurable timeline + heatmap (collapsible) */}
+          <SummaryTimeline
+            filterType={filterType}
+            filterValue={showFilter ? filterValue.trim() : ''}
+            timeWindow={timeWindow}
+            maxArticles={maxArticles}
+          />
 
           {/* Summary text */}
           <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5">

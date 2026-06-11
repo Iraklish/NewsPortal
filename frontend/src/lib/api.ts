@@ -405,6 +405,53 @@ export interface SummaryResponse {
   filter_value: string
 }
 
+export interface TimelineBucket {
+  start: string
+  count: number
+  tension: number
+  escalation: number
+}
+
+export interface TimelineRow {
+  label: string
+  kind: 'country' | 'topic'
+  total: number
+}
+
+export interface TimelineResponse {
+  total: number
+  buckets: TimelineBucket[]
+  rows: TimelineRow[]
+  matrix: number[][]
+  max_count: number
+  max_tension: number
+  max_cell: number
+  top_terms: { term: string; count: number }[]
+  granularity: string
+  bucket_seconds: number
+  start: string | null
+  end: string | null
+}
+
+export interface TimelineRequest {
+  filter_type?: 'tag' | 'category' | 'keyword'
+  filter_value?: string
+  time_window_hours?: number
+  max_articles?: number
+  granularity?: string   // auto|15min|30min|hour|3hour|6hour|day|week
+}
+
+export interface TimelineArticle {
+  id: number
+  title: string | null
+  source: string | null
+  url: string | null
+  category: string | null
+  published_at: string | null
+  tension: number
+  terms: string[]
+}
+
 export interface MindMapNode {
   kind: string
   explanation: string
@@ -718,6 +765,30 @@ export const analysisApi = {
 
   summarizeAsk(req: { summary: string; question: string; history: Array<{ role: string; content: string }> }) {
     return request<{ response: string }>('/analysis/summary/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+  },
+
+  timeline(req: TimelineRequest) {
+    return request<TimelineResponse>('/analysis/summary/timeline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+  },
+
+  timelineArticles(req: {
+    filter_type?: 'tag' | 'category' | 'keyword'
+    filter_value?: string
+    start: string
+    end: string
+    entity?: string | null
+    entity_kind?: 'country' | 'topic' | null
+    limit?: number
+  }) {
+    return request<{ articles: TimelineArticle[]; count: number }>('/analysis/summary/timeline/articles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),

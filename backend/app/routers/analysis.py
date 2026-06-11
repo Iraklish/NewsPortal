@@ -418,6 +418,388 @@ async def ask_about_summary(
     return {"response": response_text}
 
 
+# ── Timeline / heatmap ────────────────────────────────────────────────────────
+
+class TimelineRequest(BaseModel):
+    filter_type: str = "keyword"          # "tag" | "category" | "keyword"
+    filter_value: str = ""
+    time_window_hours: int = 24           # 0 = all time (span derived from data)
+    max_articles: int = 0                 # 0 = no hard cap (bounded to 20000)
+    granularity: str = "auto"             # auto|15min|30min|hour|3hour|6hour|day|week
+
+
+# Weighted escalation/tension lexicon, matched against title + summary.
+# Whole-word entries require word boundaries; stem entries match as a prefix
+# (e.g. "escalat" → escalate/escalation/escalated).
+_ESC_EXACT: dict[str, int] = {
+    "war": 3, "missile": 3, "rocket": 3, "strike": 3, "attack": 3, "drone": 3,
+    "killed": 3, "dead": 3, "raid": 3, "siege": 3, "nuclear": 3, "offensive": 3,
+    "assault": 3, "explosion": 3, "bombing": 3, "ballistic": 3, "warhead": 3,
+    "incursion": 3, "ambush": 3,
+    "conflict": 2, "clash": 2, "tension": 2, "threat": 2, "sanction": 2, "troops": 2,
+    "warning": 2, "crisis": 2, "ceasefire": 2, "truce": 2, "blockade": 2, "standoff": 2,
+    "wounded": 2, "alert": 2, "gunfire": 2, "hostage": 2, "coup": 2,
+    "protest": 1, "unrest": 1, "dispute": 1, "talks": 1, "summit": 1, "embargo": 1,
+    "border": 1, "tariff": 1, "cyberattack": 1,
+}
+_ESC_STEM: dict[str, int] = {
+    "invasi": 3, "invade": 3, "airstrik": 3, "air strik": 3, "shell": 3, "bombard": 3,
+    "casualt": 3, "massacre": 3, "retaliat": 3, "escalat": 3,
+    "militar": 2, "mobiliz": 2, "deploy": 2, "hostil": 2, "provocation": 2, "evacuat": 2,
+    "negotiat": 1, "diplomat": 1,
+}
+_ESC_PATTERN = re.compile(
+    r"\b(?:"
+    + "|".join(
+        [re.escape(t) + r"\b" for t in sorted(_ESC_EXACT, key=len, reverse=True)]
+        + [re.escape(t) for t in sorted(_ESC_STEM, key=len, reverse=True)]
+    )
+    + ")",
+    re.IGNORECASE,
+)
+_ESC_HIGH = 5   # per-article score at/above which an article is a "severe" event
+
+
+def _weight_for(tok: str) -> tuple[int, str]:
+    t = tok.lower()
+    if t in _ESC_EXACT:
+        return _ESC_EXACT[t], t
+    for stem, w in _ESC_STEM.items():
+        if t.startswith(stem):
+            return w, stem
+    return 0, t
+
+
+def _tension_score(text: str) -> tuple[int, list[str]]:
+    """Return (capped weighted tension score, distinct matched terms)."""
+    if not text:
+        return 0, []
+    score = 0
+    matched: list[str] = []
+    seen: set[str] = set()
+    for m in _ESC_PATTERN.finditer(text):
+        w, key = _weight_for(m.group(0))
+        if not w:
+            continue
+        score += w
+        if key not in seen:
+            seen.add(key)
+            matched.append(key)
+    return min(score, 15), matched
+
+
+# ── Country & topic detection (heatmap rows) ──────────────────────────────────
+# Each entity maps to a list of lowercase match terms (stems allowed). Matched
+# against title + summary with a leading word boundary so "russia" is found in
+# "russian" but not in "prussia".
+_COUNTRY_TERMS: dict[str, list[str]] = {
+    "Israel": ["israel", "israeli", "idf", "jerusalem", "tel aviv", "netanyahu", "knesset"],
+    "Palestine": ["palestin", "gaza", "hamas", "west bank", "ramallah", "rafah"],
+    "Lebanon": ["lebanon", "lebanese", "beirut", "hezbollah", "hizbollah"],
+    "Iran": ["iran", "iranian", "tehran", "irgc", "ayatollah", "khamenei"],
+    "Syria": ["syria", "syrian", "damascus"],
+    "Yemen": ["yemen", "yemeni", "houthi"],
+    "Saudi Arabia": ["saudi", "riyadh"],
+    "Ukraine": ["ukrain", "kyiv", "kiev", "zelensky", "zelenskyy"],
+    "Russia": ["russia", "russian", "moscow", "kremlin", "putin"],
+    "United States": ["united states", "u.s.", "america", "american", "washington", "white house", "biden", "trump", "pentagon"],
+    "China": ["china", "chinese", "beijing", "xi jinping", "taiwan"],
+    "United Kingdom": ["britain", "british", "united kingdom", "u.k.", "london", "downing street"],
+    "Germany": ["german", "berlin", "scholz", "bundestag"],
+    "France": ["france", "french", "paris", "macron"],
+    "Turkey": ["turkey", "turkish", "ankara", "erdogan", "istanbul"],
+    "European Union": ["european union", "brussels", "european commission", "eurozone"],
+    "Poland": ["poland", "polish", "warsaw"],
+    "Georgia": ["georgia", "georgian", "tbilisi"],
+    "India": ["india", "indian", "new delhi", "modi"],
+    "North Korea": ["north korea", "pyongyang", "kim jong"],
+    "Japan": ["japan", "japanese", "tokyo"],
+    "Egypt": ["egypt", "egyptian", "cairo"],
+    "Italy": ["italy", "italian", "rome", "meloni"],
+    "Spain": ["spain", "spanish", "madrid"],
+}
+_TOPIC_TERMS: dict[str, list[str]] = {
+    "Military conflict": ["war", "missile", "rocket", "airstrike", "air strike", "shelling", "offensive",
+                          "troops", "military", "combat", "frontline", "invasion", "drone", "bombard", "artillery"],
+    "Diplomacy": ["talks", "negotiat", "summit", "ceasefire", "treaty", "diplomat", "accord", "peace deal"],
+    "Economy & markets": ["inflation", "gdp", "recession", "stock market", "stocks", "economy", "interest rate",
+                          "central bank", "unemployment", "bond yield"],
+    "Energy": ["oil", "natural gas", "pipeline", "opec", "energy", "electricity", "power grid", "fuel"],
+    "Elections & politics": ["election", "ballot", "parliament", "coalition", "referendum", "prime minister", "presidential"],
+    "Sanctions & trade": ["sanction", "tariff", "embargo", "trade deal", "export ban"],
+    "Protests & unrest": ["protest", "riot", "unrest", "demonstration", "uprising"],
+    "Security & terrorism": ["terror", "militant", "insurgent", "extremis", "hostage", "kidnap"],
+    "Technology & cyber": ["cyber", "hack", "semiconductor", "artificial intelligence", "data breach"],
+    "Migration": ["migrant", "refugee", "asylum"],
+    "Disasters & climate": ["earthquake", "flood", "wildfire", "hurricane", "climate", "drought"],
+}
+
+
+def _build_entity_pattern(term_map: dict[str, list[str]]) -> tuple[re.Pattern, dict[str, str]]:
+    lookup: dict[str, str] = {}
+    for label, terms in term_map.items():
+        for t in terms:
+            lookup[t.lower()] = label
+    alts = sorted((re.escape(t) for t in lookup), key=len, reverse=True)
+    pattern = re.compile(r"\b(?:" + "|".join(alts) + ")", re.IGNORECASE)
+    return pattern, lookup
+
+
+_COUNTRY_PATTERN, _COUNTRY_LOOKUP = _build_entity_pattern(_COUNTRY_TERMS)
+_TOPIC_PATTERN, _TOPIC_LOOKUP = _build_entity_pattern(_TOPIC_TERMS)
+
+
+def _detect_entities(text: str) -> tuple[set[str], set[str]]:
+    """Return (countries, topics) mentioned in the text."""
+    if not text:
+        return set(), set()
+    countries = {_COUNTRY_LOOKUP[m.group(0).lower()] for m in _COUNTRY_PATTERN.finditer(text)
+                 if m.group(0).lower() in _COUNTRY_LOOKUP}
+    topics = {_TOPIC_LOOKUP[m.group(0).lower()] for m in _TOPIC_PATTERN.finditer(text)
+              if m.group(0).lower() in _TOPIC_LOOKUP}
+    return countries, topics
+
+
+def _entity_terms(kind: str, label: str) -> list[str]:
+    src = _COUNTRY_TERMS if kind == "country" else _TOPIC_TERMS
+    return src.get(label, [])
+
+
+_GRAN_SECONDS: dict[str, int] = {
+    "15min": 900, "30min": 1800, "hour": 3600, "3hour": 10800,
+    "6hour": 21600, "day": 86400, "week": 604800,
+}
+_SNAP_STEPS = [900, 1800, 3600, 10800, 21600, 43200, 86400, 604800]
+_MAX_BUCKETS = 120
+_MAX_COUNTRY_ROWS = 8
+_MAX_TOPIC_ROWS = 6
+
+
+def _resolve_bucket_seconds(granularity: str, span_seconds: float) -> int:
+    if granularity in _GRAN_SECONDS:
+        return _GRAN_SECONDS[granularity]
+    # auto: aim for ~40 buckets, snapped to a sensible step, then bound the count.
+    target = max(900.0, span_seconds / 40.0)
+    bucket = next((s for s in _SNAP_STEPS if s >= target), _SNAP_STEPS[-1])
+    while span_seconds / bucket > _MAX_BUCKETS:
+        idx = _SNAP_STEPS.index(bucket)
+        if idx >= len(_SNAP_STEPS) - 1:
+            break
+        bucket = _SNAP_STEPS[idx + 1]
+    return bucket
+
+
+@router.post("/summary/timeline")
+def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
+    """Bucketed activity timeline + per-category heatmap with a tension/escalation
+    signal, computed over the same article set the summary uses."""
+    if body.filter_type not in ("tag", "category", "keyword"):
+        raise HTTPException(status_code=400, detail="filter_type must be tag, category, or keyword")
+
+    fv = (body.filter_value or "").strip()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    query = db.query(
+        Article.published_at, Article.fetched_at, Article.category,
+        Article.title, Article.summary,
+    )
+    if body.time_window_hours and body.time_window_hours > 0:
+        cutoff = now - timedelta(hours=body.time_window_hours)
+        query = query.filter(or_(
+            and_(Article.published_at.isnot(None), Article.published_at >= cutoff),
+            and_(Article.published_at.is_(None), Article.fetched_at >= cutoff),
+        ))
+
+    if fv:
+        if body.filter_type == "tag":
+            query = query.filter(sa_text(
+                "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) = lower(:tv))"
+            ).bindparams(tv=fv))
+        elif body.filter_type == "category":
+            query = query.filter(Article.category == fv)
+        else:
+            pat = f"%{fv}%"
+            query = query.filter(or_(
+                Article.title.ilike(pat),
+                Article.summary.ilike(pat),
+                Article.content.ilike(pat),
+                sa_text(
+                    "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) LIKE lower(:qtag))"
+                ).bindparams(qtag=pat),
+            ))
+
+    cap = body.max_articles if body.max_articles and body.max_articles > 0 else 20000
+    rows = (
+        query.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
+        .limit(cap).all()
+    )
+
+    # Normalize to (timestamp, text) keeping only rows with a usable time.
+    items: list[tuple[datetime, str]] = []
+    for pub, fetched, cat, title, summary in rows:
+        ts = pub or fetched
+        if not ts:
+            continue
+        items.append((ts, f"{title or ''} {summary or ''}"))
+
+    if not items:
+        return {
+            "total": 0, "buckets": [], "rows": [], "matrix": [],
+            "max_count": 0, "max_tension": 0, "max_cell": 0, "top_terms": [],
+            "granularity": body.granularity, "bucket_seconds": 0,
+            "start": None, "end": None,
+        }
+
+    times = [t for t, _ in items]
+    start = (now - timedelta(hours=body.time_window_hours)) if body.time_window_hours and body.time_window_hours > 0 else min(times)
+    end = now
+    span = max(1.0, (end - start).total_seconds())
+    bucket_seconds = _resolve_bucket_seconds(body.granularity, span)
+    n_buckets = max(1, min(_MAX_BUCKETS, int(span // bucket_seconds) + 1))
+
+    def bucket_index(ts: datetime) -> int:
+        idx = int((ts - start).total_seconds() // bucket_seconds)
+        return max(0, min(n_buckets - 1, idx))
+
+    counts = [0] * n_buckets
+    tension = [0] * n_buckets
+    escalation = [0] * n_buckets
+    term_counter: dict[str, int] = {}
+    # Heatmap rows are detected entities — countries and topics, not feed categories.
+    ent_totals: dict[tuple[str, str], int] = {}          # (kind, label) -> total mentions
+    ent_bucket: dict[tuple[str, str], list[int]] = {}    # (kind, label) -> per-bucket counts
+
+    for ts, text in items:
+        bi = bucket_index(ts)
+        counts[bi] += 1
+        score, matched = _tension_score(text)
+        tension[bi] += score
+        if score >= _ESC_HIGH:
+            escalation[bi] += 1
+        for m in matched:
+            term_counter[m] = term_counter.get(m, 0) + 1
+        countries, topics = _detect_entities(text)
+        for kind, labels in (("country", countries), ("topic", topics)):
+            for label in labels:
+                key = (kind, label)
+                ent_totals[key] = ent_totals.get(key, 0) + 1
+                ent_bucket.setdefault(key, [0] * n_buckets)[bi] += 1
+
+    # Pick the most-mentioned countries and topics as heatmap rows.
+    ranked = sorted(ent_totals, key=lambda k: ent_totals[k], reverse=True)
+    top_countries = [k for k in ranked if k[0] == "country"][:_MAX_COUNTRY_ROWS]
+    top_topics = [k for k in ranked if k[0] == "topic"][:_MAX_TOPIC_ROWS]
+    chosen = top_countries + top_topics
+    rows_out = [{"label": label, "kind": kind, "total": ent_totals[(kind, label)]} for (kind, label) in chosen]
+    matrix = [ent_bucket[k] for k in chosen]
+
+    buckets = []
+    for i in range(n_buckets):
+        b_start = start + timedelta(seconds=bucket_seconds * i)
+        buckets.append({
+            "start": b_start.isoformat(),
+            "count": counts[i],
+            "tension": tension[i],
+            "escalation": escalation[i],
+        })
+
+    top_terms = sorted(term_counter.items(), key=lambda kv: kv[1], reverse=True)[:12]
+
+    return {
+        "total": len(items),
+        "buckets": buckets,
+        "rows": rows_out,
+        "matrix": matrix,
+        "max_count": max(counts) if counts else 0,
+        "max_tension": max(tension) if tension else 0,
+        "max_cell": max((max(r) for r in matrix), default=0),
+        "top_terms": [{"term": t, "count": c} for t, c in top_terms],
+        "granularity": body.granularity,
+        "bucket_seconds": bucket_seconds,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+    }
+
+
+class TimelineArticlesRequest(BaseModel):
+    filter_type: str = "keyword"
+    filter_value: str = ""
+    start: str                          # ISO timestamp (inclusive)
+    end: str                            # ISO timestamp (exclusive)
+    entity: Optional[str] = None        # heatmap row label (country / topic)
+    entity_kind: Optional[str] = None   # "country" | "topic"
+    limit: int = 100
+
+
+@router.post("/summary/timeline/articles")
+def summary_timeline_articles(body: TimelineArticlesRequest, db: Session = Depends(get_db)):
+    """Drill-down: list the articles behind a timeline bucket / heatmap cell."""
+    if body.filter_type not in ("tag", "category", "keyword"):
+        raise HTTPException(status_code=400, detail="filter_type must be tag, category, or keyword")
+    try:
+        start = datetime.fromisoformat(body.start).replace(tzinfo=None)
+        end = datetime.fromisoformat(body.end).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="invalid start/end timestamp")
+
+    query = db.query(Article).filter(or_(
+        and_(Article.published_at.isnot(None), Article.published_at >= start, Article.published_at < end),
+        and_(Article.published_at.is_(None), Article.fetched_at >= start, Article.fetched_at < end),
+    ))
+
+    # Heatmap-row entity filter: match any of the country/topic's terms in text.
+    if body.entity and body.entity_kind in ("country", "topic"):
+        terms = _entity_terms(body.entity_kind, body.entity)
+        if terms:
+            conds = []
+            for t in terms:
+                pat = f"%{t}%"
+                conds.append(Article.title.ilike(pat))
+                conds.append(Article.summary.ilike(pat))
+            query = query.filter(or_(*conds))
+
+    fv = (body.filter_value or "").strip()
+    if fv:
+        if body.filter_type == "tag":
+            query = query.filter(sa_text(
+                "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) = lower(:tv))"
+            ).bindparams(tv=fv))
+        elif body.filter_type == "category":
+            query = query.filter(Article.category == fv)
+        else:
+            pat = f"%{fv}%"
+            query = query.filter(or_(
+                Article.title.ilike(pat),
+                Article.summary.ilike(pat),
+                Article.content.ilike(pat),
+                sa_text(
+                    "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) LIKE lower(:qtag))"
+                ).bindparams(qtag=pat),
+            ))
+
+    limit = max(1, min(500, body.limit))
+    rows = (
+        query.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
+        .limit(limit).all()
+    )
+
+    out = []
+    for a in rows:
+        score, terms = _tension_score(f"{a.title or ''} {a.summary or ''}")
+        ts = a.published_at or a.fetched_at
+        out.append({
+            "id": a.id,
+            "title": a.title,
+            "source": a.source,
+            "url": a.url,
+            "category": a.category,
+            "published_at": ts.isoformat() if ts else None,
+            "tension": score,
+            "terms": terms[:5],
+        })
+    return {"articles": out, "count": len(out)}
+
+
 @router.get("/{analysis_id}", response_model=AnalysisOut)
 def get_analysis(analysis_id: int, db: Session = Depends(get_db)):
     analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
