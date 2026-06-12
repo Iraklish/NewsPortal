@@ -865,6 +865,18 @@ export default function SummaryPage() {
                               <div className="mt-2 text-xs text-red-400">{fc.error}</div>
                             )}
                           </div>
+                          {s.url && s.url.startsWith('http') && (
+                            <a
+                              href={s.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Open article"
+                              className="flex items-center justify-center p-1.5 rounded-lg text-slate-400 border border-[#1e2433]
+                                         hover:bg-white/10 hover:text-white transition-colors shrink-0"
+                            >
+                              <ExternalLink size={12} />
+                            </a>
+                          )}
                           {s.id != null && (
                             <button
                               onClick={() => runFactCheck(s.id!)}
