@@ -118,7 +118,7 @@ function AccordionToggle({
 
 export default function SummaryPage() {
   // primary controls
-  const [timeWindow, setTimeWindow]   = useState(6)
+  const [timeWindow, setTimeWindow]   = useState(1)
   const [maxArticles, setMaxArticles] = useState(0)   // 0 = All
   const { language }                  = useLanguage()
 
@@ -791,7 +791,7 @@ export default function SummaryPage() {
                 </h2>
               </button>
               {sourcesOpen && (
-                <div className="px-5 pb-5 border-t border-[#1e2433] pt-1">
+                <div className="px-5 pb-5 border-t border-[#1e2433] pt-1 max-h-[600px] overflow-y-auto">
                   {result.sources.map((s, i) => {
                     const fc = s.id != null ? factChecks[s.id] : undefined
                     return (
