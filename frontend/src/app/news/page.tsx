@@ -1264,7 +1264,7 @@ function ArticleDetail({ article, onClose, onPrev, onNext, position }: {
 
     try {
       if (mode === 'factcheck') {
-        const res = await analysisApi.factCheckArticle(article.id)
+        const res = await analysisApi.factCheckArticle(article.id, language)
         setTimeline(prev => prev
           .filter(it => it.id !== pendingId)
           .concat({ kind: 'assistant', id: `m-${Date.now()}`, at: Date.now(), content: res.response })

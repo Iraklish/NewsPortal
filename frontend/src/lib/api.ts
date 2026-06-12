@@ -694,10 +694,14 @@ export const analysisApi = {
     })
   },
 
-  factCheckArticle(articleId: number) {
+  factCheckArticle(articleId: number, language?: string) {
     return request<{ response: string; references: unknown[]; used_web: boolean }>(
       `/analysis/article/${articleId}/factcheck`,
-      { method: 'POST' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: language ?? '' }),
+      },
     )
   },
 

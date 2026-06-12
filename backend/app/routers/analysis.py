@@ -1059,9 +1059,26 @@ def _build_factcheck_web_block(web_results: list[dict]) -> tuple[str, list[dict]
     return "\n".join(blocks), refs
 
 
+class FactCheckRequest(BaseModel):
+    language: str = ""   # "" / "English" → English; other values → that language
+
+
+# Force the response language (the article may be in any language; without this
+# the model just mirrors the source language and ignores the user's choice).
+_FACTCHECK_LANG: dict[str, str] = {
+    "Hebrew":   "Respond entirely in Hebrew (עברית).",
+    "Russian":  "Respond entirely in Russian (Русский).",
+    "Georgian": "Respond entirely in Georgian (ქართული).",
+    "French":   "Respond entirely in French (Français).",
+    "German":   "Respond entirely in German (Deutsch).",
+    "English":  "Respond entirely in English, regardless of the article's language.",
+}
+
+
 @router.post("/article/{article_id}/factcheck")
 async def factcheck_article(
     article_id: int,
+    body: Optional[FactCheckRequest] = None,
     db: Session = Depends(get_db),
 ):
     """Fact-check an article's main claims against live web sources.
@@ -1107,6 +1124,12 @@ async def factcheck_article(
         "- End with a one-line **Overall:** assessment of the article's reliability.\n"
         "- Be concrete and skeptical. Do not invent corroboration that the sources don't provide."
     )
+
+    # Pin the output language to the user's selection (default English).
+    lang = ((body.language if body else "") or "").strip() or "English"
+    lang_instr = _FACTCHECK_LANG.get(lang, f"Respond entirely in {lang}.")
+    system += f"\n\nIMPORTANT: {lang_instr}"
+
     user_prompt = "Fact-check the article above and report your findings."
 
     try:
