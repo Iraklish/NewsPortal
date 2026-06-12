@@ -391,7 +391,7 @@ async def generate_summary(
             "source": a.source,
             "published_at": a.published_at.isoformat() if a.published_at else None,
         }
-        for a in articles[:500]
+        for a in articles
     ]
 
     return {
