@@ -1,10 +1,11 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart2, LineChart, Network, Settings, MessageSquare, MessageCircle, Newspaper, FileText, Menu, X, Send, Search, ScrollText, Languages, LogOut, UserCircle, Twitter } from 'lucide-react'
+import { BarChart2, LineChart, Network, Settings, MessageSquare, MessageCircle, Newspaper, FileText, Menu, X, Send, Search, ScrollText, Languages, LogOut, UserCircle, Twitter, Type, Minus, Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import AIChatPanel from './AIChatPanel'
 import { useLanguage, LANGUAGES, Lang } from '@/lib/language'
+import { useFontSize } from '@/lib/fontsize'
 import { useAuth } from '@/lib/auth'
 
 const nav = [
@@ -27,6 +28,7 @@ export default function Sidebar() {
   const [chatOpen, setChatOpen] = useState(false)
   const [chatUsed, setChatUsed] = useState(false)
   const { language, setLanguage } = useLanguage()
+  const { scale, increase, decrease, reset, canIncrease, canDecrease } = useFontSize()
   const { user, logout } = useAuth()
 
   // Close sidebar on route change (mobile nav tap)
@@ -130,6 +132,42 @@ export default function Sidebar() {
               <option key={l} value={l} className="bg-[#0d1117]">{l}</option>
             ))}
           </select>
+        </div>
+
+        {/* Global font-size control */}
+        <div className="p-3 border-t border-[#1e2433]">
+          <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5 px-1">
+            <Type size={13} className="text-indigo-400" />
+            Font size
+          </label>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={decrease}
+              disabled={!canDecrease}
+              title="Smaller text"
+              aria-label="Decrease font size"
+              className="p-2 rounded-lg border border-[#1e2433] text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              <Minus size={14} />
+            </button>
+            <button
+              onClick={reset}
+              title="Reset to 100%"
+              aria-label="Reset font size"
+              className="flex-1 px-2 py-2 rounded-lg border border-[#1e2433] text-xs font-medium text-slate-300 hover:text-white hover:border-slate-600 transition-colors"
+            >
+              {scale}%
+            </button>
+            <button
+              onClick={increase}
+              disabled={!canIncrease}
+              title="Larger text"
+              aria-label="Increase font size"
+              className="p-2 rounded-lg border border-[#1e2433] text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
         </div>
 
         {/* AI Chat button */}
