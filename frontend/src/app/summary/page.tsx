@@ -6,7 +6,7 @@ import {
   ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter, Maximize2, Minimize2, Plus, X,
   ShieldCheck, Loader2,
 } from 'lucide-react'
-import { analysisApi, articlesApi, settingsApi, sourcesApi, SummaryResponse } from '@/lib/api'
+import { analysisApi, articlesApi, settingsApi, sourcesApi, Article, SummaryResponse } from '@/lib/api'
 import SummaryMarkdown from '@/components/SummaryMarkdown'
 import MessageContent from '@/components/MessageContent'
 import SummaryViewerModal from '@/components/SummaryViewerModal'
@@ -149,6 +149,12 @@ export default function SummaryPage() {
   const [sourceSearch, setSourceSearch] = useState('')
   const [factChecks, setFactChecks]   = useState<Record<number, { loading: boolean; text?: string; error?: string }>>({})
 
+  // local article viewer (modal)
+  const [viewArticleOpen, setViewArticleOpen]       = useState(false)
+  const [viewArticle, setViewArticle]               = useState<Article | null>(null)
+  const [viewArticleLoading, setViewArticleLoading] = useState(false)
+  const [viewArticleError, setViewArticleError]     = useState<string | null>(null)
+
   // autocomplete
   const [categories, setCategories]   = useState<string[]>([])
   const [tags, setTags]               = useState<string[]>([])
@@ -212,6 +218,21 @@ export default function SummaryPage() {
 
   function removePreset(p: string) {
     persistPresets(presets.filter(x => x !== p))
+  }
+
+  async function openArticleView(articleId: number) {
+    setViewArticleOpen(true)
+    setViewArticle(null)
+    setViewArticleError(null)
+    setViewArticleLoading(true)
+    try {
+      const a = await articlesApi.get(articleId)
+      setViewArticle(a)
+    } catch (e: unknown) {
+      setViewArticleError(e instanceof Error ? e.message : 'Failed to load article')
+    } finally {
+      setViewArticleLoading(false)
+    }
   }
 
   async function runFactCheck(articleId: number) {
@@ -865,12 +886,22 @@ export default function SummaryPage() {
                               <div className="mt-2 text-xs text-red-400">{fc.error}</div>
                             )}
                           </div>
+                          {s.id != null && (
+                            <button
+                              onClick={() => openArticleView(s.id!)}
+                              title="Open in app"
+                              className="flex items-center justify-center p-1.5 rounded-lg text-slate-400 border border-[#1e2433]
+                                         hover:bg-white/10 hover:text-white transition-colors shrink-0"
+                            >
+                              <FileText size={12} />
+                            </button>
+                          )}
                           {s.url && s.url.startsWith('http') && (
                             <a
                               href={s.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              title="Open article"
+                              title="Open original source"
                               className="flex items-center justify-center p-1.5 rounded-lg text-slate-400 border border-[#1e2433]
                                          hover:bg-white/10 hover:text-white transition-colors shrink-0"
                             >
@@ -909,6 +940,85 @@ export default function SummaryPage() {
           themes={result.key_themes}
           onClose={() => setViewerOpen(false)}
         />
+      )}
+
+      {/* Local article viewer */}
+      {viewArticleOpen && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center overflow-y-auto p-4 md:p-8"
+          onClick={() => setViewArticleOpen(false)}
+        >
+          <div
+            className="bg-[#0d1117] border border-[#1e2433] shadow-2xl flex flex-col w-full max-w-2xl my-auto rounded-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#1e2433]">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText size={16} className="text-indigo-400 flex-shrink-0" />
+                <h2 className="text-sm font-bold text-white truncate">
+                  {viewArticle?.title || 'Article'}
+                </h2>
+              </div>
+              <button
+                onClick={() => setViewArticleOpen(false)}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors flex-shrink-0"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1 max-h-[70vh]">
+              {viewArticleLoading && (
+                <div className="flex items-center gap-2 text-xs text-slate-500 py-8 justify-center">
+                  <Loader2 size={14} className="animate-spin" /> Loading article…
+                </div>
+              )}
+              {viewArticleError && (
+                <div className="text-xs text-red-400 py-4 text-center">{viewArticleError}</div>
+              )}
+              {viewArticle && !viewArticleLoading && (
+                <>
+                  <div className="flex items-center gap-2 mb-3 text-xs text-slate-500">
+                    {viewArticle.source && <span>{viewArticle.source}</span>}
+                    {viewArticle.published_at && (
+                      <span className="flex items-center gap-1">
+                        <Clock size={11} />
+                        {new Date(viewArticle.published_at).toLocaleString(undefined, {
+                          month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                        })}
+                      </span>
+                    )}
+                    {viewArticle.category && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-[#161b22] border border-[#1e2433]">{viewArticle.category}</span>
+                    )}
+                  </div>
+                  {viewArticle.tags && viewArticle.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      {viewArticle.tags.map((t, i) => (
+                        <span key={i} className="flex items-center gap-1 px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded text-[10px] text-indigo-300">
+                          <Tag size={9} /> {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
+                    {viewArticle.content || viewArticle.summary || 'No content available.'}
+                  </div>
+                  {viewArticle.url && viewArticle.url.startsWith('http') && (
+                    <a
+                      href={viewArticle.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 mt-4 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                      <ExternalLink size={11} /> Open original source
+                    </a>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
