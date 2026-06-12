@@ -1104,7 +1104,7 @@ async def ask_about_article(
     image_bytes, mime = (None, "image/jpeg")
     if (article.image_url or "").strip():
         try:
-            image_bytes, mime = await _load_image(article.image_url)
+            image_bytes, mime = await _load_image(article.image_url, referer=article.url)
         except Exception:
             image_bytes = None
 
@@ -1281,7 +1281,7 @@ def _media_path_for(image_url: str):
     return None
 
 
-async def _load_image(image_url: str) -> tuple[bytes | None, str]:
+async def _load_image(image_url: str, referer: str | None = None) -> tuple[bytes | None, str]:
     """Load image bytes + mime from a local /media path or a remote http(s) URL."""
     import mimetypes
     image_url = (image_url or "").strip()
@@ -1297,10 +1297,20 @@ async def _load_image(image_url: str) -> tuple[bytes | None, str]:
         except Exception:
             return None, mime
 
-    # Remote image (e.g. RSS article image).
+    # Remote image (e.g. RSS article image). Many sites hotlink-protect images
+    # and 403 requests without a browser-like User-Agent / Referer, even though
+    # the browser loads the same URL fine in an <img> tag.
     if image_url.startswith(("http://", "https://")):
         import httpx
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; NewsPortal/1.0)"}
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        }
+        if referer:
+            headers["Referer"] = referer
         try:
             async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
                 r = await client.get(image_url, headers=headers)
@@ -1310,7 +1320,8 @@ async def _load_image(image_url: str) -> tuple[bytes | None, str]:
                 data = r.content
                 if data and len(data) <= 15 * 1024 * 1024:
                     return data, mime
-        except Exception:
+        except Exception as exc:
+            logger.warning("[analyze-attachment] failed to fetch image %s: %s", image_url, exc)
             return None, "image/jpeg"
     return None, "image/jpeg"
 
