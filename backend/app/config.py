@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     max_auto_analyze_per_run: int = 25
     auto_analyze_enabled: bool = True
     auto_tag_interval_minutes: int = 10  # secondary scheduler: backfill tags for untagged articles
+    chat_chunk_size: int = 2000  # AI Chat bulk analysis: articles per map-reduce batch
 
     # AI prompt overrides (empty -> use hardcoded defaults)
     chat_system_prompt: str = ""

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -38,6 +39,17 @@ def _get_prompt(db: Session, key: str, default: str) -> str:
     row = db.query(AppSettings).filter(AppSettings.key == key).first()
     if row and row.value and row.value.strip():
         return row.value
+    return default
+
+
+def _get_int_setting(db: Session, key: str, default: int) -> int:
+    """Read an integer app-setting (DB override → fallback default)."""
+    row = db.query(AppSettings).filter(AppSettings.key == key).first()
+    if row and row.value and str(row.value).strip():
+        try:
+            return int(str(row.value).strip())
+        except (ValueError, TypeError):
+            pass
     return default
 
 router = APIRouter()
@@ -1286,73 +1298,196 @@ _NEED_WEB_MARKER = "[NEED_WEB]"
 _SUGGEST_MARKER = "SUGGEST_SEARCH:"
 
 
-def _gather_chat_articles(message: str, db: Session, limit: int = 25) -> list[Article]:
-    """Find articles relevant to the user's message via keyword scan.
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_MONTH_WORDS = {
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+}
 
-    Falls back to the latest articles when no useful keywords are present, so
-    the chat never starts cold.
+
+def _parse_date_range(message: str, now: datetime) -> Optional[tuple[datetime, datetime, str]]:
+    """Detect a single calendar day referenced in *message*.
+
+    Returns (start, end_exclusive, label) as naive-UTC day bounds, or None.
+    Handles today/yesterday, ISO yyyy-mm-dd, and "month day" / "day [of] month"
+    with an optional year (defaulting to the most recent past occurrence).
     """
+    import calendar
+    m = message.lower()
+
+    def day(y: int, mo: int, da: int) -> Optional[tuple[datetime, datetime, str]]:
+        try:
+            s = datetime(y, mo, da)
+        except ValueError:
+            return None
+        return s, s + timedelta(days=1), f"{calendar.month_name[mo]} {da}, {y}"
+
+    if re.search(r"\btoday\b", m):
+        s = datetime(now.year, now.month, now.day)
+        return s, s + timedelta(days=1), "today"
+    if re.search(r"\byesterday\b", m):
+        d = now - timedelta(days=1)
+        s = datetime(d.year, d.month, d.day)
+        return s, s + timedelta(days=1), "yesterday"
+
+    iso = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", m)
+    if iso:
+        return day(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
+
+    mon = "|".join(_MONTHS)
+    # "june 7", "jun 7th 2026" — (?!\d) stops the day grabbing digits of a year
+    # (e.g. "june 2025" must not parse as day=20).
+    p = re.search(rf"\b({mon})[a-z]*\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?(?!\d)(?:[,\s]+(\d{{4}}))?", m)
+    if p:
+        mo, da, yr = _MONTHS[p.group(1)], int(p.group(2)), p.group(3)
+    else:
+        # "7 june", "07 of june", "7th of jun 2026"
+        p = re.search(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({mon})[a-z]*\.?(?:[,\s]+(\d{{4}}))?", m)
+        if not p:
+            return None
+        da, mo, yr = int(p.group(1)), _MONTHS[p.group(2)], p.group(3)
+
+    if yr:
+        year = int(yr)
+    else:
+        # No explicit year → assume the most recent past occurrence.
+        year = now.year
+        if (mo, da) > (now.month, now.day):
+            year -= 1
+    return day(year, mo, da)
+
+
+_MAX_CHAT_ARTICLES = 2000   # hard ceiling on how many we feed the model at once
+
+
+def _parse_requested_count(message: str) -> Optional[int]:
+    """Detect an explicit article count, e.g. "analyze last 10000 articles"."""
+    m = message.lower()
+    for pat in (
+        r"(?:last|latest|top|recent|analy[sz]e|summari[sz]e|past)\s+(\d{1,7})",
+        r"(\d{1,7})\s+(?:articles|posts|items|stories|news\b)",
+    ):
+        mt = re.search(pat, m)
+        if mt:
+            try:
+                n = int(mt.group(1))
+                if n >= 1:
+                    return n
+            except ValueError:
+                pass
+    return None
+
+
+def _gather_chat_articles(message: str, db: Session, limit: int = 50) -> tuple[list[Article], str]:
+    """Search the whole article DB for the user's message.
+
+    Supports date references ("articles from June 7") and keywords, combined.
+    Returns (articles, scope_note) where scope_note describes how many matched
+    so the model never claims it "only has N articles" when more exist.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    date_range = _parse_date_range(message, now)
+
     raw_terms = re.findall(r"[A-Za-zÀ-ɏЀ-ӿ֐-׿]{3,}", message)
     stopwords = {
         "the", "and", "for", "with", "that", "this", "from", "have", "what", "who", "why",
-        "how", "are", "was", "were", "will", "did", "did", "you", "your", "tell", "about",
-        "today", "yesterday", "any", "news", "news?", "latest", "give", "show", "summary",
+        "how", "are", "was", "were", "will", "did", "you", "your", "tell", "about",
+        "today", "yesterday", "any", "news", "latest", "give", "show", "summary",
+        "find", "article", "articles", "published", "date", "dated", "search", "results",
+        "last", "analyze", "analyse", "summarize", "summarise", "past", "recent", "top",
     }
-    keywords = [kw.lower() for kw in raw_terms if kw.lower() not in stopwords]
-    # Dedupe while preserving order
+    keywords = [kw.lower() for kw in raw_terms
+                if kw.lower() not in stopwords and kw.lower() not in _MONTH_WORDS]
     seen: set[str] = set()
     keywords = [kw for kw in keywords if not (kw in seen or seen.add(kw))][:8]
 
     query = db.query(Article)
+    if date_range:
+        s, e, _ = date_range
+        query = query.filter(or_(
+            and_(Article.published_at.isnot(None), Article.published_at >= s, Article.published_at < e),
+            and_(Article.published_at.is_(None), Article.fetched_at >= s, Article.fetched_at < e),
+        ))
     if keywords:
         conditions = []
         for kw in keywords:
             pat = f"%{kw}%"
-            conditions.append(Article.title.ilike(pat))
-            conditions.append(Article.summary.ilike(pat))
-            conditions.append(Article.content.ilike(pat))
+            conditions += [Article.title.ilike(pat), Article.summary.ilike(pat), Article.content.ilike(pat)]
         query = query.filter(or_(*conditions))
 
+    # Exact count only when a (selective) date filter is present — a COUNT with
+    # ILIKE over the whole table for keyword-only queries would be too slow.
+    total = query.count() if date_range else None
     rows = (
         query.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
-        .limit(limit)
-        .all()
+        .limit(limit).all()
     )
-    # If keywords matched nothing, fall back to the latest articles so the chat
-    # at least sees the freshest news.
-    if not rows:
-        rows = (
-            db.query(Article)
-            .order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
-            .limit(limit)
-            .all()
-        )
-    return rows
+
+    if rows:
+        if date_range and keywords:
+            note = f"{total} article(s) match the query on {date_range[2]}; showing the {len(rows)} most recent."
+        elif date_range:
+            note = f"{total} article(s) were published on {date_range[2]}; showing the {len(rows)} most recent."
+        elif keywords:
+            note = f"the {len(rows)} most relevant articles matching your query (searched the full database, newest first)."
+        else:
+            note = f"the {len(rows)} latest articles."
+        return rows, note
+
+    # No matches. For an explicit date, an empty result IS the answer.
+    if date_range:
+        return [], f"No articles were found published on {date_range[2]}."
+    # Otherwise fall back to the latest so the chat is never cold.
+    rows = (
+        db.query(Article)
+        .order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
+        .limit(limit).all()
+    )
+    return rows, f"No direct matches; showing the {len(rows)} latest articles instead."
 
 
-def _build_articles_context(articles: list[Article]) -> tuple[str, list[dict]]:
+def _build_articles_context(articles: list[Article], compact: bool = False, start: int = 1) -> tuple[str, list[dict]]:
+    """Build the AI context block + UI reference list for a set of articles.
+
+    ``compact`` emits one terse line per article (title + meta, no body) so large
+    sets (hundreds–thousands) fit in the context window for bulk analysis.
+    ``start`` sets the first [A-N] index (for consistent numbering across chunks).
+    """
     if not articles:
         return "(No articles in the local database yet.)", []
     refs: list[dict] = []
     blocks: list[str] = []
-    for i, a in enumerate(articles, 1):
+    for i, a in enumerate(articles, start):
         published = a.published_at.isoformat() if a.published_at else "unknown"
-        excerpt = (a.summary or a.content or "")[:600]
-        blocks.append(
-            f"[A-{i}] {a.title or '(no title)'}\n"
-            f"    Source: {a.source or 'unknown'} | Published: {published} | Category: {a.category or '-'}\n"
-            f"    {excerpt}"
-        )
-        refs.append({
-            "kind": "article",
-            "id": a.id,
-            "title": a.title,
-            "url": a.url,
-            "source": a.source,
-            "published_at": published,
-            "snippet": (a.summary or excerpt[:200]) if (a.summary or excerpt) else None,
-        })
-    return "\n\n".join(blocks), refs
+        if compact:
+            blocks.append(
+                f"[A-{i}] {a.title or '(no title)'} | {a.source or '-'} | {published[:16]} | {a.category or '-'}"
+            )
+        else:
+            excerpt = (a.summary or a.content or "")[:600]
+            blocks.append(
+                f"[A-{i}] {a.title or '(no title)'}\n"
+                f"    Source: {a.source or 'unknown'} | Published: {published} | Category: {a.category or '-'}\n"
+                f"    {excerpt}"
+            )
+        # Cap the UI reference list in compact mode — thousands of chips is unusable.
+        if not compact or i <= 40:
+            excerpt = (a.summary or a.content or "")[:200]
+            refs.append({
+                "kind": "article",
+                "id": a.id,
+                "title": a.title,
+                "url": a.url,
+                "source": a.source,
+                "published_at": published,
+                "snippet": (a.summary or excerpt) if (a.summary or excerpt) else None,
+            })
+    sep = "\n" if compact else "\n\n"
+    return sep.join(blocks), refs
 
 
 def _parse_chat_response(raw: str) -> tuple[str, Optional[str], bool]:
@@ -1387,6 +1522,70 @@ def _parse_chat_response(raw: str) -> tuple[str, Optional[str], bool]:
     return text, suggested, needs_web
 
 
+_CHAT_CHUNK_SIZE = 2000         # default articles per map step (configurable in Settings)
+_MAX_CHAINED_ARTICLES = 10000   # ceiling for chained bulk analysis
+_CHAIN_CONCURRENCY = 4          # parallel map calls
+
+
+async def _map_chunk(
+    idx: int, n_chunks: int, chunk: list[Article], start_index: int,
+    message: str, base_prompt: str, db, sem: asyncio.Semaphore,
+) -> str:
+    """Map step: summarize one batch of articles into a short digest."""
+    from ..services.tagger import _is_rate_limit_error, _parse_retry_delay
+
+    block, _ = _build_articles_context(chunk, compact=True, start=start_index)
+    system = (
+        f"{base_prompt}\n\nYou are analyzing batch {idx + 1} of {n_chunks} from a large set of recent "
+        f"news articles (headlines + metadata). Produce a concise digest of THIS batch: 4-7 bullet points "
+        f"capturing the main themes, key events, recurring countries/topics, and notable developments. "
+        f"Be specific and cite article numbers as [A-N]. No preamble."
+    )
+    user = f"ARTICLES (batch {idx + 1}/{n_chunks}):\n{block}\n\nUser's overall request: {message}"
+    async with sem:
+        for attempt in range(3):
+            try:
+                return await call_ai(system=system, user=user, max_tokens=700, db=db)
+            except Exception as exc:
+                if _is_rate_limit_error(str(exc)) and attempt < 2:
+                    await asyncio.sleep(min((_parse_retry_delay(str(exc)) or 5) + 1, 30))
+                    continue
+                raise
+
+
+async def _chained_analysis(
+    message: str, articles: list[Article], base_prompt: str, db, chunk_size: int = _CHAT_CHUNK_SIZE,
+) -> tuple[str, list[dict]]:
+    """Map-reduce bulk analysis: digest each batch, then synthesize the digests."""
+    chunk_size = max(50, chunk_size)
+    chunks = [articles[i:i + chunk_size] for i in range(0, len(articles), chunk_size)]
+    sem = asyncio.Semaphore(_CHAIN_CONCURRENCY)
+    tasks = [
+        _map_chunk(i, len(chunks), c, i * chunk_size + 1, message, base_prompt, db, sem)
+        for i, c in enumerate(chunks)
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    digests = [(i, r) for i, r in enumerate(results) if isinstance(r, str) and r.strip()]
+    failed = len(chunks) - len(digests)
+    if not digests:
+        raise RuntimeError(results[0] if results else "all batch analyses failed")
+
+    joined = "\n\n".join(f"### Batch {i + 1}\n{d}" for i, d in digests)
+    reduce_system = (
+        f"{base_prompt}\n\nYou are given digests of {len(chunks)} batches covering {len(articles)} recent "
+        f"articles. Synthesize ONE coherent analysis that answers the user's request: merge overlapping "
+        f"themes, rank developments by importance, surface cross-batch trends, and note the dominant "
+        f"countries/topics. Cite [A-N] where useful. Be specific; avoid vague filler."
+    )
+    reduce_user = f"User request: {message}\n\n=== BATCH DIGESTS ===\n{joined}"
+    final = await call_ai(system=reduce_system, user=reduce_user, max_tokens=2000, db=db)
+
+    note = f"_Analyzed {len(articles)} articles in {len(chunks)} batches of {chunk_size}"
+    note += f" ({failed} batch(es) skipped due to errors)._\n\n" if failed else "._\n\n"
+    _, refs = _build_articles_context(articles[:60], compact=True)
+    return note + final, refs
+
+
 @router.post("/chat")
 async def chat(body: ChatRequest, db: Session = Depends(get_db)):
     base_prompt = _get_prompt(db, "chat_system_prompt", DEFAULT_CHAT_SYSTEM_PROMPT)
@@ -1402,7 +1601,7 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
         query = (body.web_query or body.message).strip()
         # Still ground in the local articles too, so the AI's web research is
         # contextualized against what we already know.
-        articles = _gather_chat_articles(body.message, db, limit=15)
+        articles, _scope = _gather_chat_articles(body.message, db, limit=20)
         articles_block, article_refs = _build_articles_context(articles)
         system = (
             f"{base_prompt}\n\n"
@@ -1436,15 +1635,44 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
         }
 
     # ── Branch B: normal chat — answer from local articles, always suggest a follow-up search ──
-    articles = _gather_chat_articles(body.message, db, limit=25)
-    articles_block, article_refs = _build_articles_context(articles)
+    requested = _parse_requested_count(body.message)
+
+    # Large bulk request ("analyze last 10000 articles") → map-reduce chaining:
+    # digest the articles in batches of chat_chunk_size, then synthesize.
+    chunk_size = max(50, _get_int_setting(db, "chat_chunk_size", _CHAT_CHUNK_SIZE))
+    if requested and requested > chunk_size:
+        articles, _scope = _gather_chat_articles(body.message, db, limit=min(requested, _MAX_CHAINED_ARTICLES))
+        if len(articles) > chunk_size:
+            try:
+                text, refs = await _chained_analysis(body.message, articles, base_prompt, db, chunk_size=chunk_size)
+            except Exception as exc:
+                logger.error("Chained chat analysis failed: %s", exc)
+                raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+            return {"response": text, "references": refs, "suggested_web_query": None}
+        # Too few to chain — answer single-shot with what we have.
+        compact, scope_note = len(articles) > 80, _scope
+    else:
+        limit = min(requested, _MAX_CHAINED_ARTICLES) if requested else 50
+        compact = bool(requested) and limit > 80
+        articles, scope_note = _gather_chat_articles(body.message, db, limit=limit)
+        if requested and requested > len(articles):
+            scope_note += (
+                f" (you requested {requested}; using the {len(articles)} most recent — the maximum that fits)"
+                if len(articles) >= _MAX_CHAT_ARTICLES
+                else f" (you requested {requested}; only {len(articles)} are available)"
+            )
+
+    articles_block, article_refs = _build_articles_context(articles, compact=compact)
 
     system = (
         f"{base_prompt}\n\n"
-        f"You have {len(articles)} local article(s) below. Treat them as your primary source.\n\n"
-        f"=== LOCAL ARTICLES ===\n{articles_block}\n\n"
+        f"These articles were retrieved by searching the FULL local database for the user's query "
+        f"(by date and/or keywords) — they are not just the latest items. Search scope: {scope_note}\n\n"
+        f"=== LOCAL ARTICLES ({len(articles)}) ===\n{articles_block}\n\n"
         f"INSTRUCTIONS:\n"
         f"• Answer the user's question grounded in the articles above. Cite specific ones with [A-N] tags inline.\n"
+        f"• The 'Search scope' line is authoritative about how many articles matched — do NOT claim you "
+        f"\"only have N articles\" or that none match a date when the scope says otherwise.\n"
         f"• If the articles do not cover the question, say so plainly and use prior general knowledge.\n"
         f"• On the LAST line, output a follow-up web search query that would enrich the answer, formatted EXACTLY as:\n"
         f"  {_SUGGEST_MARKER} <one short Google-style query>\n"

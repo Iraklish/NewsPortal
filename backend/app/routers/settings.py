@@ -57,6 +57,7 @@ _NON_SECRET_KEYS = [
     "auto_analyze_enabled",
     "fetch_interval_minutes",
     "auto_tag_interval_minutes",
+    "chat_chunk_size",
     "entertainment_keywords",
 ]
 
@@ -141,6 +142,15 @@ def get_settings(db: Session = Depends(get_db)):
     else:
         auto_tag_interval = max(1, int(settings.auto_tag_interval_minutes))
 
+    chunk_override = _db_get(db, "chat_chunk_size")
+    if chunk_override:
+        try:
+            chat_chunk_size = max(50, int(chunk_override))
+        except (ValueError, TypeError):
+            chat_chunk_size = max(50, int(settings.chat_chunk_size))
+    else:
+        chat_chunk_size = max(50, int(settings.chat_chunk_size))
+
     ent_override = _db_get(db, "entertainment_keywords") or ""
     ent_effective = ent_override if ent_override.strip() else DEFAULT_ENTERTAINMENT_KEYWORDS_STR
 
@@ -177,6 +187,7 @@ def get_settings(db: Session = Depends(get_db)):
         auto_analyze_enabled=auto_analyze,
         fetch_interval_minutes=fetch_interval,
         auto_tag_interval_minutes=auto_tag_interval,
+        chat_chunk_size=chat_chunk_size,
         entertainment_keywords=ent_effective,
         entertainment_keywords_default=DEFAULT_ENTERTAINMENT_KEYWORDS_STR,
         entertainment_keywords_customized=bool(ent_override.strip()),
@@ -442,7 +453,7 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
         "image_analysis_prompt", "link_analysis_prompt", "entertainment_keywords",
     }
     _bool_keys = {"auto_analyze_enabled"}
-    _int_keys = {"fetch_interval_minutes", "auto_tag_interval_minutes"}
+    _int_keys = {"fetch_interval_minutes", "auto_tag_interval_minutes", "chat_chunk_size"}
 
     for key, value in update_dict.items():
         if value is None:

@@ -74,6 +74,7 @@ export default function SettingsPage() {
         link_analysis_prompt: s.link_analysis_prompt_customized ? s.link_analysis_prompt : '',
         fetch_interval_minutes: s.fetch_interval_minutes,
         auto_tag_interval_minutes: s.auto_tag_interval_minutes,
+        chat_chunk_size: s.chat_chunk_size,
         entertainment_keywords: s.entertainment_keywords_customized ? s.entertainment_keywords : '',
       })
     }).catch((e: unknown) => {
@@ -607,6 +608,21 @@ export default function SettingsPage() {
                     }}
                     className="input w-32"
                   />
+                </Field>
+                <Field label="AI Chat batch size (articles per batch)">
+                  <input
+                    type="number"
+                    min={50}
+                    max={10000}
+                    step={50}
+                    value={form.chat_chunk_size ?? settings?.chat_chunk_size ?? 2000}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10)
+                      if (!isNaN(v)) set('chat_chunk_size', Math.max(50, Math.min(10000, v)))
+                    }}
+                    className="input w-32"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">Bulk &quot;analyze last N articles&quot; chats are processed in batches of this size (map-reduce).</p>
                 </Field>
                 {nextFetchAt && (
                   <div className="pb-1.5">
