@@ -194,28 +194,34 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
 
           {data && data.total > 0 && (
             <>
-              {/* Volume bar chart */}
+              {/* Volume bar chart — left spacer matches the heatmap row label width so bars line up with cells below */}
               <div>
-                <div className="flex items-end gap-px h-28">
-                  {data.buckets.map((b, i) => {
-                    const v = barValues[i] ?? 0
-                    const f = v / metricMax
-                    const isSel = selBucket === i
-                    return (
-                      <button key={i} onClick={() => drillInto(i, {})}
-                        className={['flex-1 min-w-[2px] rounded-t-sm transition-all cursor-pointer hover:brightness-125',
-                          isSel ? 'outline outline-2 outline-white/70 z-10' : 'hover:outline hover:outline-1 hover:outline-white/30'].join(' ')}
-                        style={{ height: `${Math.max(v > 0 ? 6 : 0, f * 100)}%`, backgroundColor: `rgba(99,102,241,${0.25 + 0.75 * f})` }}
-                        title={`${fmtTime(b.start, data.bucket_seconds)}\nArticles: ${b.count}\n\nClick to list articles`} />
-                    )
-                  })}
+                <div className="flex items-end gap-2">
+                  <div className="w-24 shrink-0" />
+                  <div className="flex items-end gap-px h-28 flex-1 min-w-[280px]">
+                    {data.buckets.map((b, i) => {
+                      const v = barValues[i] ?? 0
+                      const f = v / metricMax
+                      const isSel = selBucket === i
+                      return (
+                        <button key={i} onClick={() => drillInto(i, {})}
+                          className={['flex-1 min-w-[3px] rounded-t-sm transition-all cursor-pointer hover:brightness-125',
+                            isSel ? 'outline outline-2 outline-white/70 z-10' : 'hover:outline hover:outline-1 hover:outline-white/30'].join(' ')}
+                          style={{ height: `${Math.max(v > 0 ? 6 : 0, f * 100)}%`, backgroundColor: `rgba(99,102,241,${0.25 + 0.75 * f})` }}
+                          title={`${fmtTime(b.start, data.bucket_seconds)}\nArticles: ${b.count}\n\nClick to list articles`} />
+                      )
+                    })}
+                  </div>
                 </div>
-                <div className="flex mt-1.5">
-                  {data.buckets.map((b, i) => (
-                    <div key={i} className="flex-1 min-w-[2px] text-center overflow-visible">
-                      {i % labelEvery === 0 && <span className="text-[9px] text-slate-600 whitespace-nowrap">{fmtShort(b.start, data.bucket_seconds)}</span>}
-                    </div>
-                  ))}
+                <div className="flex mt-1.5 gap-2">
+                  <div className="w-24 shrink-0" />
+                  <div className="flex flex-1 min-w-[280px]">
+                    {data.buckets.map((b, i) => (
+                      <div key={i} className="flex-1 min-w-[3px] text-center overflow-visible">
+                        {i % labelEvery === 0 && <span className="text-[9px] text-slate-600 whitespace-nowrap">{fmtShort(b.start, data.bucket_seconds)}</span>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
