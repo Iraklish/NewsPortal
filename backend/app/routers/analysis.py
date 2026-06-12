@@ -568,6 +568,15 @@ def _entity_terms(kind: str, label: str) -> list[str]:
     return src.get(label, [])
 
 
+def _iso_utc(dt: datetime) -> str:
+    """Serialize a naive-UTC datetime as an explicit UTC ISO string (…+00:00).
+
+    The DB stores naive UTC; without a timezone marker the browser parses the
+    string as *local* time, which shifts drill-down ranges and breaks them.
+    """
+    return dt.replace(tzinfo=timezone.utc).isoformat()
+
+
 def _apply_adjustable_filters(query, country: str | None, topic: str | None, q: str | None):
     """AND the timeline's adjustable Country / Topic / Free-text filters onto a query."""
     for kind, label in (("country", country), ("topic", topic)):
@@ -588,8 +597,9 @@ def _apply_adjustable_filters(query, country: str | None, topic: str | None, q: 
 
 
 _GRAN_SECONDS: dict[str, int] = {
-    "15min": 900, "30min": 1800, "hour": 3600, "3hour": 10800,
-    "6hour": 21600, "day": 86400, "week": 604800,
+    "1min": 60, "5min": 300, "10min": 600, "15min": 900, "30min": 1800,
+    "45min": 2700, "hour": 3600, "3hour": 10800, "6hour": 21600,
+    "day": 86400, "week": 604800,
 }
 _SNAP_STEPS = [900, 1800, 3600, 10800, 21600, 43200, 86400, 604800]
 _MAX_BUCKETS = 120
@@ -677,11 +687,20 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
         }
 
     times = [t for t, _ in items]
-    start = (now - timedelta(hours=body.time_window_hours)) if body.time_window_hours and body.time_window_hours > 0 else min(times)
+    win_start = (now - timedelta(hours=body.time_window_hours)) if body.time_window_hours and body.time_window_hours > 0 else min(times)
     end = now
-    span = max(1.0, (end - start).total_seconds())
+    span = max(1.0, (end - win_start).total_seconds())
     bucket_seconds = _resolve_bucket_seconds(body.granularity, span)
-    n_buckets = max(1, min(_MAX_BUCKETS, int(span // bucket_seconds) + 1))
+    # If the requested resolution would exceed the bucket budget (e.g. 1m over a
+    # 24h window), anchor the buckets to the most recent end of the window so the
+    # view stays at full resolution instead of clamping old items into one bar.
+    n_raw = int(span // bucket_seconds) + 1
+    if n_raw > _MAX_BUCKETS:
+        n_buckets = _MAX_BUCKETS
+        start = end - timedelta(seconds=bucket_seconds * n_buckets)
+    else:
+        n_buckets = max(1, n_raw)
+        start = win_start
 
     def bucket_index(ts: datetime) -> int:
         idx = int((ts - start).total_seconds() // bucket_seconds)
@@ -695,7 +714,11 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
     ent_totals: dict[tuple[str, str], int] = {}          # (kind, label) -> total mentions
     ent_bucket: dict[tuple[str, str], list[int]] = {}    # (kind, label) -> per-bucket counts
 
+    visible = 0
     for ts, text in items:
+        if ts < start:
+            continue  # older than the anchored view — not shown
+        visible += 1
         bi = bucket_index(ts)
         counts[bi] += 1
         score, matched = _tension_score(text)
@@ -723,7 +746,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
     for i in range(n_buckets):
         b_start = start + timedelta(seconds=bucket_seconds * i)
         buckets.append({
-            "start": b_start.isoformat(),
+            "start": _iso_utc(b_start),
             "count": counts[i],
             "tension": tension[i],
             "escalation": escalation[i],
@@ -732,7 +755,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
     top_terms = sorted(term_counter.items(), key=lambda kv: kv[1], reverse=True)[:12]
 
     return {
-        "total": len(items),
+        "total": visible,
         "buckets": buckets,
         "rows": rows_out,
         "matrix": matrix,
@@ -742,8 +765,8 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
         "top_terms": [{"term": t, "count": c} for t, c in top_terms],
         "granularity": body.granularity,
         "bucket_seconds": bucket_seconds,
-        "start": start.isoformat(),
-        "end": end.isoformat(),
+        "start": _iso_utc(start),
+        "end": _iso_utc(end),
         "all_countries": list(_COUNTRY_TERMS),
         "all_topics": list(_TOPIC_TERMS),
     }
@@ -814,7 +837,7 @@ def summary_timeline_articles(body: TimelineArticlesRequest, db: Session = Depen
             "source": a.source,
             "url": a.url,
             "category": a.category,
-            "published_at": ts.isoformat() if ts else None,
+            "published_at": _iso_utc(ts) if ts else None,
             "tension": score,
             "terms": terms[:5],
         })

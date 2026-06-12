@@ -7,9 +7,10 @@ import {
 import { analysisApi, TimelineResponse, TimelineArticle } from '@/lib/api'
 
 const GRANULARITIES = [
-  { value: 'auto',  label: 'Auto' }, { value: '15min', label: '15m' }, { value: '30min', label: '30m' },
-  { value: 'hour',  label: '1h' },   { value: '3hour', label: '3h' },  { value: '6hour', label: '6h' },
-  { value: 'day',   label: '1d' },   { value: 'week',  label: '1w' },
+  { value: 'auto',  label: 'Auto' }, { value: '1min',  label: '1m' },  { value: '5min',  label: '5m' },
+  { value: '10min', label: '10m' },  { value: '15min', label: '15m' }, { value: '30min', label: '30m' },
+  { value: '45min', label: '45m' },  { value: 'hour',  label: '1h' },  { value: '3hour', label: '3h' },
+  { value: '6hour', label: '6h' },   { value: 'day',   label: '1d' },  { value: 'week',  label: '1w' },
 ]
 
 interface Props {
