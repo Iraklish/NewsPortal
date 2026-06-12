@@ -390,6 +390,7 @@ export interface SummaryRequest {
 }
 
 export interface SummarySourceRef {
+  id?: number
   title?: string
   url: string
   source?: string

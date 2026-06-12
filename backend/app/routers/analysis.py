@@ -385,6 +385,7 @@ async def generate_summary(
 
     sources = [
         {
+            "id": a.id,
             "title": a.title,
             "url": a.url,
             "source": a.source,

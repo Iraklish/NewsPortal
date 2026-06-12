@@ -4,6 +4,7 @@ import {
   ScrollText, Tag, Layers, Search, Sparkles, RefreshCw,
   ChevronRight, Clock, FileText, ExternalLink,
   ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter, Maximize2, Minimize2, Plus, X,
+  ShieldCheck, Loader2,
 } from 'lucide-react'
 import { analysisApi, articlesApi, settingsApi, sourcesApi, SummaryResponse } from '@/lib/api'
 import SummaryMarkdown from '@/components/SummaryMarkdown'
@@ -143,6 +144,10 @@ export default function SummaryPage() {
   const [result, setResult]           = useState<SummaryResponse | null>(null)
   const [viewerOpen, setViewerOpen]   = useState(false)
 
+  // source articles (collapsed by default) + per-article fact-check state
+  const [sourcesOpen, setSourcesOpen] = useState(false)
+  const [factChecks, setFactChecks]   = useState<Record<number, { loading: boolean; text?: string; error?: string }>>({})
+
   // autocomplete
   const [categories, setCategories]   = useState<string[]>([])
   const [tags, setTags]               = useState<string[]>([])
@@ -208,6 +213,16 @@ export default function SummaryPage() {
     persistPresets(presets.filter(x => x !== p))
   }
 
+  async function runFactCheck(articleId: number) {
+    setFactChecks(prev => ({ ...prev, [articleId]: { loading: true } }))
+    try {
+      const res = await analysisApi.factCheckArticle(articleId, language !== 'English' ? language : undefined)
+      setFactChecks(prev => ({ ...prev, [articleId]: { loading: false, text: res.response } }))
+    } catch (e: unknown) {
+      setFactChecks(prev => ({ ...prev, [articleId]: { loading: false, error: e instanceof Error ? e.message : 'Fact-check failed' } }))
+    }
+  }
+
   useEffect(() => { setFilterValue('') }, [filterType])
 
   useEffect(() => {
@@ -240,6 +255,8 @@ export default function SummaryPage() {
     setError(null)
     setResult(null)
     setChatMessages([])
+    setSourcesOpen(false)
+    setFactChecks({})
     try {
       const res = await analysisApi.summarize({
         filter_type: filterType,
@@ -762,45 +779,79 @@ export default function SummaryPage() {
 
           {/* Source articles */}
           {result.sources.length > 0 && (
-            <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5">
-              <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-3">
-                Source Articles ({result.sources.length})
-              </h2>
-              <div>
-                {result.sources.map((s, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-3 py-2.5 border-b border-[#1e2433] last:border-0"
-                  >
-                    <ChevronRight size={12} className="text-slate-600 mt-0.5 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      {s.url && s.url.startsWith('http') ? (
-                        <a
-                          href={s.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sm text-white hover:text-indigo-400 transition-colors flex items-center gap-1.5 group"
-                        >
-                          <span className="line-clamp-1">{s.title || s.url}</span>
-                          <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
-                        </a>
-                      ) : (
-                        <span className="text-sm text-white line-clamp-1">{s.title || s.url}</span>
-                      )}
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {s.source && <span className="text-xs text-slate-500">{s.source}</span>}
-                        {s.published_at && (
-                          <span className="text-xs text-slate-600">
-                            {new Date(s.published_at).toLocaleDateString(undefined, {
-                              month: 'short', day: 'numeric', year: 'numeric',
-                            })}
-                          </span>
-                        )}
+            <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl overflow-hidden">
+              <button
+                onClick={() => setSourcesOpen(v => !v)}
+                className="flex items-center gap-2 w-full px-5 py-3.5 text-left hover:bg-white/[0.02] transition-colors"
+                title={sourcesOpen ? 'Collapse' : 'Expand'}
+              >
+                {sourcesOpen ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />}
+                <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium">
+                  Source Articles ({result.sources.length})
+                </h2>
+              </button>
+              {sourcesOpen && (
+                <div className="px-5 pb-5 border-t border-[#1e2433] pt-1">
+                  {result.sources.map((s, i) => {
+                    const fc = s.id != null ? factChecks[s.id] : undefined
+                    return (
+                      <div
+                        key={i}
+                        className="py-2.5 border-b border-[#1e2433] last:border-0"
+                      >
+                        <div className="flex items-start gap-3">
+                          <ChevronRight size={12} className="text-slate-600 mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            {s.url && s.url.startsWith('http') ? (
+                              <a
+                                href={s.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-white hover:text-indigo-400 transition-colors flex items-center gap-1.5 group"
+                              >
+                                <span className="line-clamp-1">{s.title || s.url}</span>
+                                <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
+                              </a>
+                            ) : (
+                              <span className="text-sm text-white line-clamp-1">{s.title || s.url}</span>
+                            )}
+                            <div className="flex items-center gap-2 mt-0.5">
+                              {s.source && <span className="text-xs text-slate-500">{s.source}</span>}
+                              {s.published_at && (
+                                <span className="text-xs text-slate-600">
+                                  {new Date(s.published_at).toLocaleDateString(undefined, {
+                                    month: 'short', day: 'numeric', year: 'numeric',
+                                  })}
+                                </span>
+                              )}
+                            </div>
+                            {fc?.text && (
+                              <div className="mt-2 px-3 py-2 bg-[#0b0e14] border border-sky-500/20 rounded-lg text-xs">
+                                <SummaryMarkdown content={fc.text} />
+                              </div>
+                            )}
+                            {fc?.error && (
+                              <div className="mt-2 text-xs text-red-400">{fc.error}</div>
+                            )}
+                          </div>
+                          {s.id != null && (
+                            <button
+                              onClick={() => runFactCheck(s.id!)}
+                              disabled={fc?.loading}
+                              title="Fact-check this article's claims against live web sources"
+                              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-sky-400 border border-sky-500/20
+                                         hover:bg-sky-500/10 disabled:opacity-50 transition-colors shrink-0"
+                            >
+                              {fc?.loading ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
+                              Fact check
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
 
