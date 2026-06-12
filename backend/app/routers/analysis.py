@@ -620,6 +620,66 @@ def _apply_adjustable_filters(query, country: str | None, topic: str | None, q: 
     return query
 
 
+# ── Sentiment lexicon (heatmap "Sentiment" strip) ──────────────────────────────
+# Independent of the tension/escalation lexicon above: positive vs. negative
+# framing words, each with a weight. Net per-article score = pos - neg.
+_SENT_POS_EXACT: dict[str, int] = {
+    "peace": 2, "ceasefire": 2, "truce": 2, "breakthrough": 2, "agreement": 1,
+    "deal": 1, "accord": 1, "cooperation": 1, "growth": 1, "recovery": 1,
+    "rally": 1, "surge": 1, "boost": 1, "rebound": 1, "approve": 1, "approved": 1,
+    "success": 1, "victory": 1, "relief": 1, "progress": 1, "stability": 1,
+    "improve": 1, "gains": 1, "rescue": 1, "win": 1, "milestone": 1,
+}
+_SENT_POS_STEM: dict[str, int] = {
+    "celebrat": 1, "optimis": 1, "stabiliz": 1, "thrive": 1, "recover": 1,
+}
+_SENT_NEG_EXACT: dict[str, int] = {
+    "war": 2, "attack": 2, "crisis": 2, "collapse": 2, "death": 2, "dead": 2,
+    "killed": 2, "conflict": 1, "threat": 1, "sanction": 1, "recession": 2,
+    "crash": 2, "loss": 1, "fear": 1, "unrest": 1, "violence": 2, "fail": 1,
+    "failed": 1, "warning": 1, "concern": 1, "decline": 1, "drop": 1, "plunge": 2,
+    "tension": 1, "missile": 1, "strike": 1, "explosion": 2, "bombing": 2,
+}
+_SENT_NEG_STEM: dict[str, int] = {
+    "casualt": 2, "invasi": 2, "escalat": 1, "protest": 1,
+}
+
+
+def _build_lexicon_pattern(exact: dict[str, int], stem: dict[str, int]) -> re.Pattern:
+    alts = (
+        [re.escape(t) + r"\b" for t in sorted(exact, key=len, reverse=True)]
+        + [re.escape(t) for t in sorted(stem, key=len, reverse=True)]
+    )
+    return re.compile(r"\b(?:" + "|".join(alts) + ")", re.IGNORECASE)
+
+
+_SENT_POS_PATTERN = _build_lexicon_pattern(_SENT_POS_EXACT, _SENT_POS_STEM)
+_SENT_NEG_PATTERN = _build_lexicon_pattern(_SENT_NEG_EXACT, _SENT_NEG_STEM)
+
+
+def _lexicon_score(text: str, exact: dict[str, int], stem: dict[str, int], pattern: re.Pattern) -> int:
+    if not text:
+        return 0
+    score = 0
+    for m in pattern.finditer(text):
+        t = m.group(0).lower()
+        if t in exact:
+            score += exact[t]
+            continue
+        for s, w in stem.items():
+            if t.startswith(s):
+                score += w
+                break
+    return score
+
+
+def _sentiment_score(text: str) -> int:
+    """Net per-article sentiment: positive lexicon score minus negative, capped to ±10."""
+    pos = _lexicon_score(text, _SENT_POS_EXACT, _SENT_POS_STEM, _SENT_POS_PATTERN)
+    neg = _lexicon_score(text, _SENT_NEG_EXACT, _SENT_NEG_STEM, _SENT_NEG_PATTERN)
+    return max(-10, min(10, pos - neg))
+
+
 _GRAN_SECONDS: dict[str, int] = {
     "1min": 60, "5min": 300, "10min": 600, "15min": 900, "30min": 1800,
     "45min": 2700, "hour": 3600, "3hour": 10800, "6hour": 21600,
@@ -627,8 +687,8 @@ _GRAN_SECONDS: dict[str, int] = {
 }
 _SNAP_STEPS = [900, 1800, 3600, 10800, 21600, 43200, 86400, 604800]
 _MAX_BUCKETS = 120
-_MAX_COUNTRY_ROWS = 8
-_MAX_TOPIC_ROWS = 6
+_MAX_COUNTRY_ROWS = 14
+_MAX_TOPIC_ROWS = 11
 
 
 def _resolve_bucket_seconds(granularity: str, span_seconds: float) -> int:
@@ -704,7 +764,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
     if not items:
         return {
             "total": 0, "buckets": [], "rows": [], "matrix": [],
-            "max_count": 0, "max_tension": 0, "max_cell": 0, "top_terms": [],
+            "max_count": 0, "max_tension": 0, "max_cell": 0, "max_sentiment": 0, "top_terms": [],
             "granularity": body.granularity, "bucket_seconds": 0,
             "start": None, "end": None,
             "all_countries": list(_COUNTRY_TERMS), "all_topics": list(_TOPIC_TERMS),
@@ -733,6 +793,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
     counts = [0] * n_buckets
     tension = [0] * n_buckets
     escalation = [0] * n_buckets
+    sentiment = [0] * n_buckets
     term_counter: dict[str, int] = {}
     # Heatmap rows are detected entities — countries and topics, not feed categories.
     ent_totals: dict[tuple[str, str], int] = {}          # (kind, label) -> total mentions
@@ -749,6 +810,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
         tension[bi] += score
         if score >= _ESC_HIGH:
             escalation[bi] += 1
+        sentiment[bi] += _sentiment_score(text)
         for m in matched:
             term_counter[m] = term_counter.get(m, 0) + 1
         countries, topics = _detect_entities(text)
@@ -774,6 +836,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
             "count": counts[i],
             "tension": tension[i],
             "escalation": escalation[i],
+            "sentiment": sentiment[i],
         })
 
     top_terms = sorted(term_counter.items(), key=lambda kv: kv[1], reverse=True)[:12]
@@ -786,6 +849,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
         "max_count": max(counts) if counts else 0,
         "max_tension": max(tension) if tension else 0,
         "max_cell": max((max(r) for r in matrix), default=0),
+        "max_sentiment": max((abs(s) for s in sentiment), default=0),
         "top_terms": [{"term": t, "count": c} for t, c in top_terms],
         "granularity": body.granularity,
         "bucket_seconds": bucket_seconds,

@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Activity, ChevronDown, ChevronRight, RefreshCw, AlertTriangle,
-  X, ExternalLink, Globe, Hash, Clock, Search,
+  X, ExternalLink, Globe, Hash, Clock, Search, Smile,
 } from 'lucide-react'
 import { analysisApi, TimelineResponse, TimelineArticle } from '@/lib/api'
 
@@ -250,6 +250,33 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
                 })}
               </div>
 
+              {/* Sentiment */}
+              <div className="space-y-1 overflow-x-auto">
+                <div className="flex items-center gap-1.5 mt-2 mb-1 pl-1">
+                  <Smile size={10} className="text-slate-500" />
+                  <span className="text-[9px] uppercase tracking-wider text-slate-600">Sentiment</span>
+                </div>
+                <SentimentRow
+                  values={data.buckets.map(b => b.sentiment)} max={data.max_sentiment}
+                  selectedBucket={selBucket}
+                  onCell={(i) => drillInto(i, {})}
+                  tip={(i) => {
+                    const s = data.buckets[i].sentiment
+                    return `${fmtTime(data.buckets[i].start, data.bucket_seconds)}\nSentiment: ${s > 0 ? '+' : ''}${s}\n\nClick to list articles`
+                  }} />
+                <div className="flex items-center gap-3 pl-1 pt-0.5">
+                  <span className="flex items-center gap-1 text-[9px] text-slate-600">
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px]" style={{ backgroundColor: 'rgba(34,197,94,0.6)' }} /> Positive
+                  </span>
+                  <span className="flex items-center gap-1 text-[9px] text-slate-600">
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px]" style={{ backgroundColor: 'rgba(239,68,68,0.6)' }} /> Negative
+                  </span>
+                  <span className="flex items-center gap-1 text-[9px] text-slate-600">
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-white/[0.025]" /> Neutral
+                  </span>
+                </div>
+              </div>
+
               {/* Legend + drivers */}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
                 <span className="text-[10px] text-slate-600">
@@ -365,6 +392,43 @@ function HeatRow({
               className={['flex-1 h-4 rounded-[2px] min-w-[3px] cursor-pointer hover:brightness-150 transition-all',
                 isSel ? 'outline outline-2 outline-white/70 z-10' : ''].join(' ')}
               style={{ backgroundColor: v > 0 ? color(v / safeMax) : 'rgba(255,255,255,0.025)' }}
+              title={tip(i)} />
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Sentiment row (diverging green/red color scale) ─────────────────────────────
+
+function SentimentRow({
+  values, max, selectedBucket, onCell, tip,
+}: {
+  values: number[]
+  max: number
+  selectedBucket: number | null
+  onCell: (bucketIndex: number) => void
+  tip: (bucketIndex: number) => string
+}) {
+  const safeMax = Math.max(1, max)
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-24 shrink-0 text-[10px] truncate text-right text-slate-400">Sentiment</span>
+      <div className="flex gap-px flex-1 min-w-[280px]">
+        {values.map((v, i) => {
+          const isSel = selectedBucket === i
+          const f = Math.min(1, Math.abs(v) / safeMax)
+          const bg = v === 0
+            ? 'rgba(255,255,255,0.025)'
+            : v > 0
+              ? `rgba(34,197,94,${0.12 + 0.78 * f})`
+              : `rgba(239,68,68,${0.12 + 0.78 * f})`
+          return (
+            <button key={i} onClick={() => onCell(i)}
+              className={['flex-1 h-4 rounded-[2px] min-w-[3px] cursor-pointer hover:brightness-150 transition-all',
+                isSel ? 'outline outline-2 outline-white/70 z-10' : ''].join(' ')}
+              style={{ backgroundColor: bg }}
               title={tip(i)} />
           )
         })}

@@ -412,6 +412,7 @@ export interface TimelineBucket {
   count: number
   tension: number
   escalation: number
+  sentiment: number
 }
 
 export interface TimelineRow {
@@ -428,6 +429,7 @@ export interface TimelineResponse {
   max_count: number
   max_tension: number
   max_cell: number
+  max_sentiment: number
   top_terms: { term: string; count: number }[]
   granularity: string
   bucket_seconds: number
