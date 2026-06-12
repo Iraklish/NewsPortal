@@ -146,6 +146,7 @@ export default function SummaryPage() {
 
   // source articles (collapsed by default) + per-article fact-check state
   const [sourcesOpen, setSourcesOpen] = useState(false)
+  const [sourceSearch, setSourceSearch] = useState('')
   const [factChecks, setFactChecks]   = useState<Record<number, { loading: boolean; text?: string; error?: string }>>({})
 
   // autocomplete
@@ -245,6 +246,17 @@ export default function SummaryPage() {
     ? suggestions.filter(s => s.toLowerCase().includes(filterValue.toLowerCase())).slice(0, 10)
     : suggestions.slice(0, 10)
 
+  const filteredSources = (() => {
+    const sources = result?.sources ?? []
+    const q = sourceSearch.trim().toLowerCase()
+    if (!q) return sources
+    return sources.filter(s =>
+      (s.title || '').toLowerCase().includes(q) ||
+      (s.source || '').toLowerCase().includes(q) ||
+      (s.url || '').toLowerCase().includes(q)
+    )
+  })()
+
   // ── generate ─────────────────────────────────────────────────────────────
   const generate = useCallback(async () => {
     // Collapse the optional sections so the result is front-and-centre.
@@ -256,6 +268,7 @@ export default function SummaryPage() {
     setResult(null)
     setChatMessages([])
     setSourcesOpen(false)
+    setSourceSearch('')
     setFactChecks({})
     try {
       const res = await analysisApi.summarize({
@@ -787,12 +800,30 @@ export default function SummaryPage() {
               >
                 {sourcesOpen ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />}
                 <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium">
-                  Source Articles ({result.sources.length})
+                  Source Articles ({filteredSources.length}{filteredSources.length !== result.sources.length ? ` / ${result.sources.length}` : ''})
                 </h2>
               </button>
               {sourcesOpen && (
-                <div className="px-5 pb-5 border-t border-[#1e2433] pt-1 max-h-[600px] overflow-y-auto">
-                  {result.sources.map((s, i) => {
+                <div className="px-5 pb-5 border-t border-[#1e2433] pt-3 space-y-2">
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-600" />
+                    <input
+                      value={sourceSearch}
+                      onChange={e => setSourceSearch(e.target.value)}
+                      placeholder="Search source articles…"
+                      className="w-full bg-[#161b22] border border-[#1e2433] rounded-lg pl-8 pr-8 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/50"
+                    />
+                    {sourceSearch && (
+                      <button onClick={() => setSourceSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-white" title="Clear">
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-[600px] overflow-y-auto">
+                  {filteredSources.length === 0 && (
+                    <div className="text-xs text-slate-600 italic py-4 text-center">No source articles match &quot;{sourceSearch}&quot;.</div>
+                  )}
+                  {filteredSources.map((s, i) => {
                     const fc = s.id != null ? factChecks[s.id] : undefined
                     return (
                       <div
@@ -850,6 +881,7 @@ export default function SummaryPage() {
                       </div>
                     )
                   })}
+                  </div>
                 </div>
               )}
             </div>
