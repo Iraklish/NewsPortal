@@ -19,6 +19,7 @@ interface Message {
 const MIN_W = 320
 const MIN_H = 360
 const STORAGE_KEY = 'ai_chat_panel_size_v1'
+const WEB_SEARCH_KEY = 'ai_chat_web_search_v1'
 
 interface Size { w: number; h: number }
 
@@ -34,6 +35,17 @@ function loadSize(): Size {
     }
   } catch {}
   return { w: 420, h: 600 }
+}
+
+// Web search / AI grounding is on by default — off only if the user
+// explicitly disabled it last time.
+function loadWebSearch(): boolean {
+  if (typeof window === 'undefined') return true
+  try {
+    const raw = localStorage.getItem(WEB_SEARCH_KEY)
+    if (raw !== null) return raw === '1'
+  } catch {}
+  return true
 }
 
 function clamp(size: Size): Size {
@@ -60,14 +72,21 @@ export default function AIChatPanel({
   const [maximized, setMaximized] = useState(false)
   const [minimized, setMinimized] = useState(false)
   const [resizing, setResizing] = useState(false)
+  const [webSearch, setWebSearch] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
   const firstMsg = useRef(false)
   const sizeBeforeMax = useRef<Size | null>(null)
 
-  // Hydrate size from localStorage after mount (avoids SSR mismatch)
+  // Hydrate size + web-search toggle from localStorage after mount (avoids SSR mismatch)
   useEffect(() => {
     setSize(clamp(loadSize()))
+    setWebSearch(loadWebSearch())
   }, [])
+
+  // Persist the web-search toggle
+  useEffect(() => {
+    try { localStorage.setItem(WEB_SEARCH_KEY, webSearch ? '1' : '0') } catch {}
+  }, [webSearch])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -135,7 +154,7 @@ export default function AIChatPanel({
     setInput('')
     setLoading(true)
     try {
-      const res = await analysisApi.chat({ message: text, history: historyForApi })
+      const res = await analysisApi.chat({ message: text, history: historyForApi, use_web: webSearch })
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: res.response,
@@ -239,6 +258,16 @@ export default function AIChatPanel({
           )}
         </span>
         <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+          <button
+            onClick={() => setWebSearch(v => !v)}
+            title={webSearch ? 'Web search enabled — click to disable' : 'Web search disabled — click to enable'}
+            className={clsx(
+              'p-1.5 rounded transition-colors',
+              webSearch ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-slate-500 hover:bg-white/10 hover:text-slate-300',
+            )}
+          >
+            <Globe size={14} />
+          </button>
           <button
             onClick={() => setMinimized(v => !v)}
             title={minimized ? 'Restore' : 'Minimize'}
