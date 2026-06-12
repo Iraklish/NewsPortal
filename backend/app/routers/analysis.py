@@ -286,7 +286,7 @@ async def generate_summary(
                     ).bindparams(qtag=pat),
                 ))
 
-        limit_val = body.max_articles if body.max_articles > 0 else 5000
+        limit_val = body.max_articles if body.max_articles > 0 else _MAX_SUMMARY_ARTICLES
         articles = (
             query
             .order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
@@ -301,18 +301,6 @@ async def generate_summary(
                 f"No articles found in the last {body.time_window_hours}h"
             )
             raise HTTPException(status_code=404, detail=detail)
-
-    # Build per-article context blocks (capped at 500 chars each)
-    context_lines: list[str] = []
-    for i, a in enumerate(articles, 1):
-        published = a.published_at.isoformat() if a.published_at else "unknown"
-        excerpt = (a.summary or a.content or "")[:500]
-        context_lines.append(
-            f"[{i}] {a.title or '(no title)'}\n"
-            f"    Source: {a.source or 'unknown'} | Published: {published}\n"
-            f"    {excerpt}"
-        )
-    context_block = "\n\n".join(context_lines)
 
     # ── System prompt ─────────────────────────────────────────────────────────
     # Base: DB override → built-in default
@@ -353,23 +341,47 @@ async def generate_summary(
     else:
         header = f"Summarize the following {len(articles)} recent articles."
 
-    user = f"{header}\n\n{context_block}"
+    # When the selection/filter pulls in more articles than fit in a single AI
+    # call, fall back to map-reduce: digest each batch, then synthesize one
+    # summary from the digests (mirrors the AI Chat bulk-analysis path).
+    chunk_size = max(50, _get_int_setting(db, "chat_chunk_size", _CHAT_CHUNK_SIZE))
 
-    try:
-        raw = await call_ai(system=system, user=user, max_tokens=2000, db=db)
-    except Exception as exc:
-        logger.error("Summary AI call failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+    if len(articles) > chunk_size:
+        try:
+            final_text, _ = await _chained_analysis(header, articles, system, db, chunk_size=chunk_size)
+        except Exception as exc:
+            logger.error("Chained summary AI call failed: %s", exc)
+            raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+        data = {"summary": final_text, "key_themes": [], "notable_sources": [], "time_span": ""}
+    else:
+        # Build per-article context blocks (capped at 500 chars each)
+        context_lines: list[str] = []
+        for i, a in enumerate(articles, 1):
+            published = a.published_at.isoformat() if a.published_at else "unknown"
+            excerpt = (a.summary or a.content or "")[:500]
+            context_lines.append(
+                f"[{i}] {a.title or '(no title)'}\n"
+                f"    Source: {a.source or 'unknown'} | Published: {published}\n"
+                f"    {excerpt}"
+            )
+        context_block = "\n\n".join(context_lines)
+        user = f"{header}\n\n{context_block}"
 
-    # Parse JSON response
-    cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
-    s_idx = cleaned.find("{"); e_idx = cleaned.rfind("}")
-    if s_idx != -1 and e_idx != -1:
-        cleaned = cleaned[s_idx:e_idx + 1]
-    try:
-        data = json.loads(cleaned)
-    except Exception:
-        data = {"summary": raw, "key_themes": [], "notable_sources": [], "time_span": ""}
+        try:
+            raw = await call_ai(system=system, user=user, max_tokens=2000, db=db)
+        except Exception as exc:
+            logger.error("Summary AI call failed: %s", exc)
+            raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+
+        # Parse JSON response
+        cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+        s_idx = cleaned.find("{"); e_idx = cleaned.rfind("}")
+        if s_idx != -1 and e_idx != -1:
+            cleaned = cleaned[s_idx:e_idx + 1]
+        try:
+            data = json.loads(cleaned)
+        except Exception:
+            data = {"summary": raw, "key_themes": [], "notable_sources": [], "time_span": ""}
 
     sources = [
         {
@@ -1525,6 +1537,7 @@ def _parse_chat_response(raw: str) -> tuple[str, Optional[str], bool]:
 _CHAT_CHUNK_SIZE = 2000         # default articles per map step (configurable in Settings)
 _MAX_CHAINED_ARTICLES = 10000   # ceiling for chained bulk analysis
 _CHAIN_CONCURRENCY = 4          # parallel map calls
+_MAX_SUMMARY_ARTICLES = 50000   # ceiling for "All" max_articles on /summary
 
 
 async def _map_chunk(
