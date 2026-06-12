@@ -859,10 +859,9 @@ export default function SummaryPage() {
                                 href={s.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-sm text-white hover:text-indigo-400 transition-colors flex items-center gap-1.5 group"
+                                className="text-sm text-white hover:text-indigo-400 transition-colors line-clamp-1"
                               >
-                                <span className="line-clamp-1">{s.title || s.url}</span>
-                                <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
+                                {s.title || s.url}
                               </a>
                             ) : (
                               <span className="text-sm text-white line-clamp-1">{s.title || s.url}</span>
