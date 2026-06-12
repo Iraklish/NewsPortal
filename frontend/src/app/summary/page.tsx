@@ -5,7 +5,7 @@ import {
   ChevronRight, Clock, FileText, ExternalLink,
   ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter, Maximize2, Minimize2, Plus, X,
 } from 'lucide-react'
-import { analysisApi, articlesApi, settingsApi, SummaryResponse } from '@/lib/api'
+import { analysisApi, articlesApi, settingsApi, sourcesApi, SummaryResponse } from '@/lib/api'
 import SummaryMarkdown from '@/components/SummaryMarkdown'
 import MessageContent from '@/components/MessageContent'
 import SummaryViewerModal from '@/components/SummaryViewerModal'
@@ -47,6 +47,24 @@ const MAX_ARTICLES_OPTIONS = [
 ]
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+function relTime(iso?: string | null): string {
+  if (!iso) return 'never'
+  const ms = iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso) ? new Date(iso).getTime() : new Date(iso + 'Z').getTime()
+  const diff = Date.now() - ms
+  if (diff < 0) {
+    const min = Math.round(Math.abs(diff) / 60000)
+    if (min < 1) return 'in <1 min'
+    if (min < 60) return `in ${min} min`
+    return `in ${Math.round(min / 60)} h`
+  }
+  const min = Math.round(diff / 60000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  const h = Math.round(min / 60)
+  if (h < 24) return `${h} h ago`
+  return `${Math.round(h / 24)} d ago`
+}
 
 function PillBtn({
   active, onClick, children,
@@ -129,6 +147,9 @@ export default function SummaryPage() {
   const [categories, setCategories]   = useState<string[]>([])
   const [tags, setTags]               = useState<string[]>([])
 
+  // fetch status (last fetch indicator)
+  const [status, setStatus] = useState<{ last_fetch_at?: string | null; next_fetch_at?: string | null; ok: number; total: number; enabled: number } | null>(null)
+
   // chat
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([])
   const [chatInput, setChatInput]       = useState('')
@@ -141,6 +162,14 @@ export default function SummaryPage() {
     articlesApi.categories().then(c => setCategories(c.sort())).catch(() => {})
     articlesApi.tags().then(t => setTags(t.sort())).catch(() => {})
     settingsApi.getSummaryPresets().then(r => setPresets(r.presets)).catch(() => {})
+  }, [])
+
+  // Poll fetch status for the "Last fetch" indicator (refresh every 30s).
+  useEffect(() => {
+    const loadStatus = () => { sourcesApi.status().then(setStatus).catch(() => {}) }
+    loadStatus()
+    const id = setInterval(loadStatus, 30000)
+    return () => clearInterval(id)
   }, [])
 
   async function persistPresets(next: string[]) {
@@ -203,6 +232,10 @@ export default function SummaryPage() {
 
   // ── generate ─────────────────────────────────────────────────────────────
   const generate = useCallback(async () => {
+    // Collapse the optional sections so the result is front-and-centre.
+    setShowFilter(false)
+    setShowPresets(false)
+    setShowPrompt(false)
     setLoading(true)
     setError(null)
     setResult(null)
@@ -256,16 +289,29 @@ export default function SummaryPage() {
     <div className="flex flex-col gap-6 p-6 max-w-4xl mx-auto">
 
       {/* ── Header ───────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3">
-        <div className="p-2.5 bg-indigo-600/20 rounded-xl border border-indigo-500/30">
-          <ScrollText size={20} className="text-indigo-400" />
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-indigo-600/20 rounded-xl border border-indigo-500/30">
+            <ScrollText size={20} className="text-indigo-400" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-white">Article Summary</h1>
+            <p className="text-sm text-slate-500">
+              AI summary of recent articles — pick a window and generate
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-bold text-white">Article Summary</h1>
-          <p className="text-sm text-slate-500">
-            AI summary of recent articles — pick a window and generate
-          </p>
-        </div>
+        {status && (
+          <div
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] border border-[#1e2433] rounded-lg text-xs"
+            title={status.last_fetch_at ? `${status.ok}/${status.enabled} feeds returning content — next scheduled ${relTime(status.next_fetch_at)}` : 'No fetch has run yet'}
+          >
+            <Clock size={11} className="text-slate-500" />
+            <span className="text-slate-500">Last fetch:</span>
+            <span className="text-slate-200 font-medium">{relTime(status.last_fetch_at)}</span>
+            <span className="text-slate-600 ml-1">· {status.ok}/{status.enabled} feeds</span>
+          </div>
+        )}
       </div>
 
       {/* ── Controls card ────────────────────────────────────────────────── */}
