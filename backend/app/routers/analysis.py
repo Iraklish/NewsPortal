@@ -1336,15 +1336,31 @@ def _parse_date_range(message: str, now: datetime) -> Optional[tuple[datetime, d
             s = datetime(y, mo, da)
         except ValueError:
             return None
-        return s, s + timedelta(days=1), f"{calendar.month_name[mo]} {da}, {y}"
+        return s, s + timedelta(days=1), f"on {calendar.month_name[mo]} {da}, {y}"
+
+    # Relative ranges: "past/last N day(s)/week(s)/month(s)" and the unnumbered
+    # "this/past/last week/month" (treated as 7 / 30 days respectively).
+    rel = re.search(r"\b(?:past|last)\s+(\d{1,3})\s*(day|week|month)s?\b", m)
+    if rel:
+        n = int(rel.group(1))
+        unit = rel.group(2)
+        days = n * (7 if unit == "week" else 30 if unit == "month" else 1)
+        start = now - timedelta(days=days)
+        return start, now + timedelta(seconds=1), f"in the past {n} {unit}{'s' if n != 1 else ''}"
+    rel = re.search(r"\b(?:this|past|last)\s+(week|month)\b", m)
+    if rel:
+        unit = rel.group(1)
+        days = 7 if unit == "week" else 30
+        start = now - timedelta(days=days)
+        return start, now + timedelta(seconds=1), f"in the past {unit}"
 
     if re.search(r"\btoday\b", m):
         s = datetime(now.year, now.month, now.day)
-        return s, s + timedelta(days=1), "today"
+        return s, s + timedelta(days=1), "on today"
     if re.search(r"\byesterday\b", m):
         d = now - timedelta(days=1)
         s = datetime(d.year, d.month, d.day)
-        return s, s + timedelta(days=1), "yesterday"
+        return s, s + timedelta(days=1), "on yesterday"
 
     iso = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", m)
     if iso:
@@ -1411,11 +1427,23 @@ def _gather_chat_articles(message: str, db: Session, limit: int = 50) -> tuple[l
         "today", "yesterday", "any", "news", "latest", "give", "show", "summary",
         "find", "article", "articles", "published", "date", "dated", "search", "results",
         "last", "analyze", "analyse", "summarize", "summarise", "past", "recent", "top",
+        "review", "days", "according", "them", "into", "account", "take", "taking",
+        "week", "weeks", "month", "months", "year", "years", "can", "could", "would",
+        "should", "may", "might", "them",
     }
     keywords = [kw.lower() for kw in raw_terms
                 if kw.lower() not in stopwords and kw.lower() not in _MONTH_WORDS]
     seen: set[str] = set()
     keywords = [kw for kw in keywords if not (kw in seen or seen.add(kw))][:8]
+
+    # Proper nouns from the original (cased) message — a strong signal for
+    # entity searches like "Nvidia stock price". Used to narrow a date-range
+    # search so a specific entity isn't drowned out by generic recent articles.
+    proper_terms = re.findall(r"\b[A-ZА-ЯЁ][a-zа-яё]{2,}\b", message)
+    proper_keywords = [kw.lower() for kw in proper_terms
+                        if kw.lower() not in stopwords and kw.lower() not in _MONTH_WORDS]
+    seen2: set[str] = set()
+    proper_keywords = [kw for kw in proper_keywords if not (kw in seen2 or seen2.add(kw))][:5]
 
     query = db.query(Article)
     if date_range:
@@ -1424,6 +1452,28 @@ def _gather_chat_articles(message: str, db: Session, limit: int = 50) -> tuple[l
             and_(Article.published_at.isnot(None), Article.published_at >= s, Article.published_at < e),
             and_(Article.published_at.is_(None), Article.fetched_at >= s, Article.fetched_at < e),
         ))
+
+    # If we have a date range AND a likely entity name, try a tighter match
+    # first — a broad OR over generic keywords across a wide window tends to
+    # drown the entity out with unrelated, more-recent articles.
+    if date_range and proper_keywords:
+        entity_conditions = []
+        for kw in proper_keywords:
+            pat = f"%{kw}%"
+            entity_conditions += [Article.title.ilike(pat), Article.summary.ilike(pat), Article.content.ilike(pat)]
+        entity_query = query.filter(or_(*entity_conditions))
+        entity_total = entity_query.count()
+        if entity_total:
+            rows = (
+                entity_query.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
+                .limit(limit).all()
+            )
+            note = (
+                f"{entity_total} article(s) mentioning {'/'.join(proper_keywords)} were found "
+                f"{date_range[2]}; showing the {len(rows)} most recent."
+            )
+            return rows, note
+
     if keywords:
         conditions = []
         for kw in keywords:
@@ -1441,9 +1491,9 @@ def _gather_chat_articles(message: str, db: Session, limit: int = 50) -> tuple[l
 
     if rows:
         if date_range and keywords:
-            note = f"{total} article(s) match the query on {date_range[2]}; showing the {len(rows)} most recent."
+            note = f"{total} article(s) match the query {date_range[2]}; showing the {len(rows)} most recent."
         elif date_range:
-            note = f"{total} article(s) were published on {date_range[2]}; showing the {len(rows)} most recent."
+            note = f"{total} article(s) were published {date_range[2]}; showing the {len(rows)} most recent."
         elif keywords:
             note = f"the {len(rows)} most relevant articles matching your query (searched the full database, newest first)."
         else:
@@ -1452,7 +1502,7 @@ def _gather_chat_articles(message: str, db: Session, limit: int = 50) -> tuple[l
 
     # No matches. For an explicit date, an empty result IS the answer.
     if date_range:
-        return [], f"No articles were found published on {date_range[2]}."
+        return [], f"No articles were found published {date_range[2]}."
     # Otherwise fall back to the latest so the chat is never cold.
     rows = (
         db.query(Article)
