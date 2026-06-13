@@ -263,11 +263,20 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
                 </div>
               </div>
 
-              {/* Country, topic & company heatmap */}
+              {/* Country, topic & company heatmap — when an adjustable filter (Country/Topic/Company)
+                  is active, only its matching row is shown so the heatmap reflects the selection */}
               <div className="space-y-1 overflow-x-auto">
-                {data.rows.map((row, r) => {
-                  const prev = data.rows[r - 1]
-                  const groupBreak = r > 0 && prev.kind !== row.kind
+                {data.rows
+                  .map((row, idx) => ({ row, idx }))
+                  .filter(({ row }) => {
+                    if (row.kind === 'country' && country) return row.label === country
+                    if (row.kind === 'topic' && topic) return row.label === topic
+                    if (row.kind === 'company' && company) return row.label === company
+                    return true
+                  })
+                  .map(({ row, idx }, r, arr) => {
+                  const prev = arr[r - 1]?.row
+                  const groupBreak = r > 0 && prev!.kind !== row.kind
                   const isCountry = row.kind === 'country'
                   const isCompany = row.kind === 'company'
                   const activeLabel = isCountry ? country : isCompany ? company : topic
@@ -287,7 +296,7 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
                         </div>
                       )}
                       <HeatRow label={row.label} labelClass="text-slate-400"
-                        values={data.matrix[r]} max={data.max_cell}
+                        values={data.matrix[idx]} max={data.max_cell}
                         color={(f) => `rgba(99,102,241,${0.06 + 0.94 * f})`}
                         selectedBucket={selBucket} selectedMatches={!!selMatches}
                         active={activeLabel === row.label}
