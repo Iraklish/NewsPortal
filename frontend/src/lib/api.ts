@@ -418,7 +418,7 @@ export interface TimelineBucket {
 
 export interface TimelineRow {
   label: string
-  kind: 'country' | 'topic'
+  kind: 'country' | 'topic' | 'company'
   total: number
 }
 
@@ -438,6 +438,7 @@ export interface TimelineResponse {
   end: string | null
   all_countries: string[]
   all_topics: string[]
+  all_companies: string[]
 }
 
 export interface TimelineRequest {
@@ -448,6 +449,7 @@ export interface TimelineRequest {
   granularity?: string   // auto|15min|30min|hour|3hour|6hour|day|week
   country?: string | null
   topic?: string | null
+  company?: string | null
   q?: string | null
 }
 
@@ -800,6 +802,7 @@ export const analysisApi = {
     end: string
     country?: string | null
     topic?: string | null
+    company?: string | null
     q?: string | null
     limit?: number
   }) {

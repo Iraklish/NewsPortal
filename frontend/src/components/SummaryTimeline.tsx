@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Activity, ChevronDown, ChevronRight, RefreshCw, AlertTriangle,
-  X, ExternalLink, Globe, Hash, Clock, Search, Smile, ScrollText, Loader2,
+  X, ExternalLink, Globe, Hash, Clock, Search, Smile, ScrollText, Loader2, Building2,
 } from 'lucide-react'
 import { analysisApi, TimelineResponse, TimelineArticle, SummaryResponse } from '@/lib/api'
 import { useLanguage } from '@/lib/language'
@@ -22,7 +22,7 @@ interface Props {
   maxArticles: number
 }
 
-interface Selection { bucket: number; country: string | null; topic: string | null }
+interface Selection { bucket: number; country: string | null; topic: string | null; company: string | null }
 
 function fmtTime(iso: string, bucketSeconds: number): string {
   const d = new Date(iso)
@@ -45,6 +45,7 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
   // adjustable filters
   const [country, setCountry]   = useState<string | null>(null)
   const [topic, setTopic]       = useState<string | null>(null)
+  const [company, setCompany]   = useState<string | null>(null)
   const [textInput, setTextInput] = useState('')
   const [q, setQ]               = useState('')
 
@@ -72,27 +73,28 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
       const res = await analysisApi.timeline({
         filter_type: filterType, filter_value: filterValue,
         time_window_hours: timeWindow, max_articles: maxArticles,
-        granularity, country, topic, q,
+        granularity, country, topic, company, q,
       })
       setData(res); setSelection(null); setDrill(null)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load timeline')
     } finally { setLoading(false) }
-  }, [filterType, filterValue, timeWindow, maxArticles, granularity, country, topic, q])
+  }, [filterType, filterValue, timeWindow, maxArticles, granularity, country, topic, company, q])
 
   useEffect(() => { if (open) load() }, [open, load])
   // reset adjustable filters when the parent summary scope changes
-  useEffect(() => { setCountry(null); setTopic(null); setTextInput(''); setQ(''); setSelection(null); setDrill(null) },
+  useEffect(() => { setCountry(null); setTopic(null); setCompany(null); setTextInput(''); setQ(''); setSelection(null); setDrill(null) },
     [filterType, filterValue, timeWindow, maxArticles])
 
   const barValues = useMemo<number[]>(() => data ? data.buckets.map(b => b.count) : [], [data])
   const metricMax = useMemo(() => Math.max(1, ...barValues), [barValues])
 
-  const drillInto = useCallback(async (bucket: number, override: { country?: string | null; topic?: string | null }) => {
+  const drillInto = useCallback(async (bucket: number, override: { country?: string | null; topic?: string | null; company?: string | null }) => {
     if (!data) return
     const c = override.country !== undefined ? override.country : country
     const t = override.topic !== undefined ? override.topic : topic
-    setSelection({ bucket, country: c, topic: t })
+    const co = override.company !== undefined ? override.company : company
+    setSelection({ bucket, country: c, topic: t, company: co })
     setDrillLoading(true); setDrillError(null); setDrill(null)
     setDrillSummary(null); setDrillSummaryError(null)
     const startISO = data.buckets[bucket].start
@@ -101,13 +103,13 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
       const res = await analysisApi.timelineArticles({
         filter_type: filterType, filter_value: filterValue,
         start: startISO, end: new Date(endMs).toISOString(),
-        country: c, topic: t, q, limit: 100,
+        country: c, topic: t, company: co, q, limit: 100,
       })
       setDrill(res.articles)
     } catch (e: unknown) {
       setDrillError(e instanceof Error ? e.message : 'Failed to load articles')
     } finally { setDrillLoading(false) }
-  }, [data, filterType, filterValue, country, topic, q])
+  }, [data, filterType, filterValue, country, topic, company, q])
 
   const clearSelection = () => {
     setSelection(null); setDrill(null); setDrillError(null)
@@ -133,7 +135,7 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
   const nBuckets = data?.buckets.length ?? 0
   const labelEvery = nBuckets > 0 ? Math.max(1, Math.ceil(nBuckets / 6)) : 1
   const selBucket = selection?.bucket ?? null
-  const noEntitySel = !!selection && !selection.country && !selection.topic
+  const noEntitySel = !!selection && !selection.country && !selection.topic && !selection.company
 
   const selectCls = 'bg-[#161b22] border border-[#1e2433] rounded-lg px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-indigo-500/50 max-w-[150px]'
 
@@ -149,7 +151,7 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
         {data && (
           <span className="text-[10px] px-1.5 py-0.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded-full leading-none">{data.total}</span>
         )}
-        <span className="text-[10px] text-slate-600 ml-1 hidden sm:inline">countries · topics · filterable</span>
+        <span className="text-[10px] text-slate-600 ml-1 hidden sm:inline">countries · topics · companies · filterable</span>
         {open && (
           <span role="button" tabIndex={0}
             onClick={(e) => { e.stopPropagation(); if (!loading) load() }}
@@ -189,6 +191,14 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
               <select className={selectCls} value={topic ?? ''} onChange={e => setTopic(e.target.value || null)}>
                 <option value="">All</option>
                 {(data?.all_topics ?? []).map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+
+            <label className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-600 uppercase tracking-wider flex items-center gap-1"><Building2 size={10} /> Company</span>
+              <select className={selectCls} value={company ?? ''} onChange={e => setCompany(e.target.value || null)}>
+                <option value="">All</option>
+                {(data?.all_companies ?? []).map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
 
@@ -253,20 +263,27 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
                 </div>
               </div>
 
-              {/* Country & topic heatmap */}
+              {/* Country, topic & company heatmap */}
               <div className="space-y-1 overflow-x-auto">
                 {data.rows.map((row, r) => {
                   const prev = data.rows[r - 1]
                   const groupBreak = r > 0 && prev.kind !== row.kind
                   const isCountry = row.kind === 'country'
-                  const activeLabel = isCountry ? country : topic
-                  const selMatches = noEntitySel || (isCountry ? selection?.country === row.label : selection?.topic === row.label)
+                  const isCompany = row.kind === 'company'
+                  const activeLabel = isCountry ? country : isCompany ? company : topic
+                  const selMatches = noEntitySel || (isCountry ? selection?.country === row.label
+                    : isCompany ? selection?.company === row.label
+                    : selection?.topic === row.label)
+                  const groupIcon = isCountry ? <Globe size={10} className="text-slate-500" />
+                    : isCompany ? <Building2 size={10} className="text-slate-500" />
+                    : <Hash size={10} className="text-slate-500" />
+                  const groupLabel = isCountry ? 'Countries' : isCompany ? 'Companies' : 'Topics'
                   return (
                     <div key={`${row.kind}:${row.label}`}>
                       {(r === 0 || groupBreak) && (
                         <div className="flex items-center gap-1.5 mt-2 mb-1 pl-1">
-                          {isCountry ? <Globe size={10} className="text-slate-500" /> : <Hash size={10} className="text-slate-500" />}
-                          <span className="text-[9px] uppercase tracking-wider text-slate-600">{isCountry ? 'Countries' : 'Topics'}</span>
+                          {groupIcon}
+                          <span className="text-[9px] uppercase tracking-wider text-slate-600">{groupLabel}</span>
                         </div>
                       )}
                       <HeatRow label={row.label} labelClass="text-slate-400"
@@ -276,8 +293,10 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
                         active={activeLabel === row.label}
                         onLabel={() => isCountry
                           ? setCountry(cur => cur === row.label ? null : row.label)
-                          : setTopic(cur => cur === row.label ? null : row.label)}
-                        onCell={(i) => drillInto(i, isCountry ? { country: row.label } : { topic: row.label })}
+                          : isCompany
+                            ? setCompany(cur => cur === row.label ? null : row.label)
+                            : setTopic(cur => cur === row.label ? null : row.label)}
+                        onCell={(i) => drillInto(i, isCountry ? { country: row.label } : isCompany ? { company: row.label } : { topic: row.label })}
                         tip={(i) => `${row.label} · ${fmtTime(data.buckets[i].start, data.bucket_seconds)}\nArticles: ${data.matrix[r][i]}\n\nClick to list articles`} />
                     </div>
                   )
@@ -351,6 +370,7 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
                       {fmtTime(data.buckets[selection.bucket].start, data.bucket_seconds)}
                       {selection.country && <span className="text-indigo-400"> · {selection.country}</span>}
                       {selection.topic && <span className="text-indigo-400"> · {selection.topic}</span>}
+                      {selection.company && <span className="text-indigo-400"> · {selection.company}</span>}
                       {drill && <span className="text-slate-500"> · {drill.length} article{drill.length === 1 ? '' : 's'}</span>}
                     </span>
                     {drill && drill.length > 0 && (
@@ -413,7 +433,7 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
       {drillSummary && (
         <SummaryViewerModal
           title={selection
-            ? [fmtTime(data!.buckets[selection.bucket].start, data!.bucket_seconds), selection.country, selection.topic].filter(Boolean).join(' · ')
+            ? [fmtTime(data!.buckets[selection.bucket].start, data!.bucket_seconds), selection.country, selection.topic, selection.company].filter(Boolean).join(' · ')
             : 'Summary'}
           content={drillSummary.summary}
           themes={drillSummary.key_themes}

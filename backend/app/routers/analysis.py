@@ -453,6 +453,7 @@ class TimelineRequest(BaseModel):
     granularity: str = "auto"             # auto|15min|30min|hour|3hour|6hour|day|week
     country: Optional[str] = None         # adjustable filter: restrict to a country
     topic: Optional[str] = None           # adjustable filter: restrict to a topic
+    company: Optional[str] = None         # adjustable filter: restrict to a company
     q: Optional[str] = None               # adjustable free-text filter
 
 
@@ -560,6 +561,11 @@ _TOPIC_TERMS: dict[str, list[str]] = {
     "Technology & cyber": ["cyber", "hack", "semiconductor", "artificial intelligence", "data breach"],
     "Migration": ["migrant", "refugee", "asylum"],
     "Disasters & climate": ["earthquake", "flood", "wildfire", "hurricane", "climate", "drought"],
+    "Technology": ["smartphone", "software", "startup", "silicon valley", "app store", "microchip",
+                   "tech industry", "robotics", "quantum computing"],
+    "Healthcare": ["vaccine", "pandemic", "hospital", "outbreak", "who", "drug approval", "clinical trial"],
+    "Space": ["space launch", "satellite", "nasa", "spacex", "rocket launch", "orbit", "space station"],
+    "Transportation": ["airline", "airport", "aviation", "shipping", "railway", "flight delay", "supply chain"],
 }
 
 
@@ -573,23 +579,53 @@ def _build_entity_pattern(term_map: dict[str, list[str]]) -> tuple[re.Pattern, d
     return pattern, lookup
 
 
+# Major companies frequently referenced in geopolitical/economic news.
+_COMPANY_TERMS: dict[str, list[str]] = {
+    "Apple": ["apple inc", "iphone", "ipad", "macbook", "tim cook", "app store"],
+    "Google / Alphabet": ["google", "alphabet inc", "youtube", "android"],
+    "Microsoft": ["microsoft", "azure", "satya nadella", "xbox"],
+    "Amazon": ["amazon.com", "amazon web services", "aws", "jeff bezos"],
+    "Meta": ["meta platforms", "facebook", "instagram", "zuckerberg", "whatsapp"],
+    "Tesla": ["tesla", "elon musk"],
+    "Nvidia": ["nvidia", "jensen huang"],
+    "OpenAI": ["openai", "chatgpt", "sam altman"],
+    "SpaceX": ["spacex", "starship", "starlink"],
+    "Boeing": ["boeing"],
+    "Lockheed Martin": ["lockheed martin", "lockheed"],
+    "ExxonMobil": ["exxon", "exxonmobil"],
+    "Shell": ["shell plc", "royal dutch shell"],
+    "Saudi Aramco": ["aramco", "saudi aramco"],
+    "Gazprom": ["gazprom"],
+    "JPMorgan": ["jpmorgan", "jp morgan", "jamie dimon"],
+    "Goldman Sachs": ["goldman sachs"],
+    "BlackRock": ["blackrock"],
+    "Samsung": ["samsung"],
+    "Huawei": ["huawei"],
+    "ByteDance / TikTok": ["bytedance", "tiktok"],
+    "Pfizer": ["pfizer"],
+}
+
+
 _COUNTRY_PATTERN, _COUNTRY_LOOKUP = _build_entity_pattern(_COUNTRY_TERMS)
 _TOPIC_PATTERN, _TOPIC_LOOKUP = _build_entity_pattern(_TOPIC_TERMS)
+_COMPANY_PATTERN, _COMPANY_LOOKUP = _build_entity_pattern(_COMPANY_TERMS)
 
 
-def _detect_entities(text: str) -> tuple[set[str], set[str]]:
-    """Return (countries, topics) mentioned in the text."""
+def _detect_entities(text: str) -> tuple[set[str], set[str], set[str]]:
+    """Return (countries, topics, companies) mentioned in the text."""
     if not text:
-        return set(), set()
+        return set(), set(), set()
     countries = {_COUNTRY_LOOKUP[m.group(0).lower()] for m in _COUNTRY_PATTERN.finditer(text)
                  if m.group(0).lower() in _COUNTRY_LOOKUP}
     topics = {_TOPIC_LOOKUP[m.group(0).lower()] for m in _TOPIC_PATTERN.finditer(text)
               if m.group(0).lower() in _TOPIC_LOOKUP}
-    return countries, topics
+    companies = {_COMPANY_LOOKUP[m.group(0).lower()] for m in _COMPANY_PATTERN.finditer(text)
+                 if m.group(0).lower() in _COMPANY_LOOKUP}
+    return countries, topics, companies
 
 
 def _entity_terms(kind: str, label: str) -> list[str]:
-    src = _COUNTRY_TERMS if kind == "country" else _TOPIC_TERMS
+    src = _COUNTRY_TERMS if kind == "country" else _COMPANY_TERMS if kind == "company" else _TOPIC_TERMS
     return src.get(label, [])
 
 
@@ -602,9 +638,9 @@ def _iso_utc(dt: datetime) -> str:
     return dt.replace(tzinfo=timezone.utc).isoformat()
 
 
-def _apply_adjustable_filters(query, country: str | None, topic: str | None, q: str | None):
-    """AND the timeline's adjustable Country / Topic / Free-text filters onto a query."""
-    for kind, label in (("country", country), ("topic", topic)):
+def _apply_adjustable_filters(query, country: str | None, topic: str | None, q: str | None, company: str | None = None):
+    """AND the timeline's adjustable Country / Topic / Company / Free-text filters onto a query."""
+    for kind, label in (("country", country), ("topic", topic), ("company", company)):
         if label:
             terms = _entity_terms(kind, label)
             if terms:
@@ -689,7 +725,8 @@ _GRAN_SECONDS: dict[str, int] = {
 _SNAP_STEPS = [900, 1800, 3600, 10800, 21600, 43200, 86400, 604800]
 _MAX_BUCKETS = 120
 _MAX_COUNTRY_ROWS = 14
-_MAX_TOPIC_ROWS = 11
+_MAX_TOPIC_ROWS = 15
+_MAX_COMPANY_ROWS = 10
 
 
 def _resolve_bucket_seconds(granularity: str, span_seconds: float) -> int:
@@ -745,8 +782,8 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
                 ).bindparams(qtag=pat),
             ))
 
-    # Adjustable graph filters (Country / Topic / Free text).
-    query = _apply_adjustable_filters(query, body.country, body.topic, body.q)
+    # Adjustable graph filters (Country / Topic / Company / Free text).
+    query = _apply_adjustable_filters(query, body.country, body.topic, body.q, body.company)
 
     cap = body.max_articles if body.max_articles and body.max_articles > 0 else 20000
     rows = (
@@ -769,6 +806,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
             "granularity": body.granularity, "bucket_seconds": 0,
             "start": None, "end": None,
             "all_countries": list(_COUNTRY_TERMS), "all_topics": list(_TOPIC_TERMS),
+            "all_companies": list(_COMPANY_TERMS),
         }
 
     times = [t for t, _ in items]
@@ -814,18 +852,19 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
         sentiment[bi] += _sentiment_score(text)
         for m in matched:
             term_counter[m] = term_counter.get(m, 0) + 1
-        countries, topics = _detect_entities(text)
-        for kind, labels in (("country", countries), ("topic", topics)):
+        countries, topics, companies = _detect_entities(text)
+        for kind, labels in (("country", countries), ("topic", topics), ("company", companies)):
             for label in labels:
                 key = (kind, label)
                 ent_totals[key] = ent_totals.get(key, 0) + 1
                 ent_bucket.setdefault(key, [0] * n_buckets)[bi] += 1
 
-    # Pick the most-mentioned countries and topics as heatmap rows.
+    # Pick the most-mentioned countries, topics, and companies as heatmap rows.
     ranked = sorted(ent_totals, key=lambda k: ent_totals[k], reverse=True)
     top_countries = [k for k in ranked if k[0] == "country"][:_MAX_COUNTRY_ROWS]
     top_topics = [k for k in ranked if k[0] == "topic"][:_MAX_TOPIC_ROWS]
-    chosen = top_countries + top_topics
+    top_companies = [k for k in ranked if k[0] == "company"][:_MAX_COMPANY_ROWS]
+    chosen = top_countries + top_topics + top_companies
     rows_out = [{"label": label, "kind": kind, "total": ent_totals[(kind, label)]} for (kind, label) in chosen]
     matrix = [ent_bucket[k] for k in chosen]
 
@@ -858,6 +897,7 @@ def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
         "end": _iso_utc(end),
         "all_countries": list(_COUNTRY_TERMS),
         "all_topics": list(_TOPIC_TERMS),
+        "all_companies": list(_COMPANY_TERMS),
     }
 
 
@@ -868,6 +908,7 @@ class TimelineArticlesRequest(BaseModel):
     end: str                         # ISO timestamp (exclusive)
     country: Optional[str] = None    # restrict to a country
     topic: Optional[str] = None      # restrict to a topic
+    company: Optional[str] = None    # restrict to a company
     q: Optional[str] = None          # free-text restriction
     limit: int = 100
 
@@ -888,8 +929,8 @@ def summary_timeline_articles(body: TimelineArticlesRequest, db: Session = Depen
         and_(Article.published_at.is_(None), Article.fetched_at >= start, Article.fetched_at < end),
     ))
 
-    # Country / Topic / Free-text restrictions from the graph + clicked cell.
-    query = _apply_adjustable_filters(query, body.country, body.topic, body.q)
+    # Country / Topic / Company / Free-text restrictions from the graph + clicked cell.
+    query = _apply_adjustable_filters(query, body.country, body.topic, body.q, body.company)
 
     fv = (body.filter_value or "").strip()
     if fv:
