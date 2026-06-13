@@ -6,6 +6,7 @@ import ErrorLoggerBoot from '@/components/ErrorLoggerBoot'
 import { LanguageProvider } from '@/lib/language'
 import { FontSizeProvider } from '@/lib/fontsize'
 import { AuthProvider } from '@/lib/auth'
+import { SidebarProvider } from '@/lib/sidebar'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -22,7 +23,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AuthProvider>
           <LanguageProvider>
             <FontSizeProvider>
-              <AppShell>{children}</AppShell>
+              <SidebarProvider>
+                <AppShell>{children}</AppShell>
+              </SidebarProvider>
             </FontSizeProvider>
           </LanguageProvider>
         </AuthProvider>
