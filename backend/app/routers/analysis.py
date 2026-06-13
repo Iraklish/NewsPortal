@@ -368,7 +368,7 @@ async def generate_summary(
         user = f"{header}\n\n{context_block}"
 
         try:
-            raw = await call_ai(system=system, user=user, max_tokens=2000, db=db)
+            raw = await call_ai(system=system, user=user, max_tokens=4096, db=db)
         except Exception as exc:
             logger.error("Summary AI call failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -1758,7 +1758,7 @@ async def _chained_analysis(
         f"countries/topics. Cite [A-N] where useful. Be specific; avoid vague filler."
     )
     reduce_user = f"User request: {message}\n\n=== BATCH DIGESTS ===\n{joined}"
-    final = await call_ai(system=reduce_system, user=reduce_user, max_tokens=2000, db=db)
+    final = await call_ai(system=reduce_system, user=reduce_user, max_tokens=4096, db=db)
 
     note = f"_Analyzed {len(articles)} articles in {len(chunks)} batches of {chunk_size}"
     note += f" ({failed} batch(es) skipped due to errors)._\n\n" if failed else "._\n\n"
