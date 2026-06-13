@@ -283,6 +283,20 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
                 </div>
               </div>
 
+              {/* Tension */}
+              <div className="space-y-1 overflow-x-auto">
+                <div className="flex items-center gap-1.5 mt-2 mb-1 pl-1">
+                  <AlertTriangle size={10} className="text-slate-500" />
+                  <span className="text-[9px] uppercase tracking-wider text-slate-600">Tension</span>
+                </div>
+                <HeatRow label="Tension" labelClass="text-slate-400"
+                  values={data.buckets.map(b => b.tension)} max={data.max_tension}
+                  color={(f) => `rgba(249,115,22,${0.12 + 0.78 * f})`}
+                  selectedBucket={selBucket} selectedMatches={true}
+                  onCell={(i) => drillInto(i, {})}
+                  tip={(i) => `${fmtTime(data.buckets[i].start, data.bucket_seconds)}\nTension: ${data.buckets[i].tension}\n\nClick to list articles`} />
+              </div>
+
               {/* Legend + drivers */}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
                 <span className="text-[10px] text-slate-600">
