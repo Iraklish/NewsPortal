@@ -2,9 +2,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Activity, ChevronDown, ChevronRight, RefreshCw, AlertTriangle,
-  X, ExternalLink, Globe, Hash, Clock, Search, Smile,
+  X, ExternalLink, Globe, Hash, Clock, Search, Smile, ScrollText, Loader2,
 } from 'lucide-react'
-import { analysisApi, TimelineResponse, TimelineArticle } from '@/lib/api'
+import { analysisApi, TimelineResponse, TimelineArticle, SummaryResponse } from '@/lib/api'
+import { useLanguage } from '@/lib/language'
+import SummaryViewerModal from './SummaryViewerModal'
 
 const GRANULARITIES = [
   { value: 'auto',  label: 'Auto' }, { value: '1min',  label: '1m' },  { value: '5min',  label: '5m' },
@@ -52,6 +54,12 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
   const [drillLoading, setDrillLoading] = useState(false)
   const [drillError, setDrillError]     = useState<string | null>(null)
 
+  // drill-down summarize
+  const { language } = useLanguage()
+  const [drillSummarizing, setDrillSummarizing] = useState(false)
+  const [drillSummaryError, setDrillSummaryError] = useState<string | null>(null)
+  const [drillSummary, setDrillSummary] = useState<SummaryResponse | null>(null)
+
   // debounce free-text → q
   useEffect(() => {
     const t = setTimeout(() => setQ(textInput.trim()), 400)
@@ -86,6 +94,7 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
     const t = override.topic !== undefined ? override.topic : topic
     setSelection({ bucket, country: c, topic: t })
     setDrillLoading(true); setDrillError(null); setDrill(null)
+    setDrillSummary(null); setDrillSummaryError(null)
     const startISO = data.buckets[bucket].start
     const endMs = Date.parse(startISO) + data.bucket_seconds * 1000
     try {
@@ -100,7 +109,26 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
     } finally { setDrillLoading(false) }
   }, [data, filterType, filterValue, country, topic, q])
 
-  const clearSelection = () => { setSelection(null); setDrill(null); setDrillError(null) }
+  const clearSelection = () => {
+    setSelection(null); setDrill(null); setDrillError(null)
+    setDrillSummary(null); setDrillSummaryError(null)
+  }
+
+  const summarizeDrill = async () => {
+    if (!drill || drill.length === 0) return
+    setDrillSummarizing(true); setDrillSummaryError(null)
+    try {
+      const res = await analysisApi.summarize({
+        article_ids: drill.map(a => a.id),
+        language: language !== 'English' ? language : undefined,
+      })
+      setDrillSummary(res)
+    } catch (e: unknown) {
+      setDrillSummaryError(e instanceof Error ? e.message : 'Failed to summarize articles')
+    } finally {
+      setDrillSummarizing(false)
+    }
+  }
 
   const nBuckets = data?.buckets.length ?? 0
   const labelEvery = nBuckets > 0 ? Math.max(1, Math.ceil(nBuckets / 6)) : 1
@@ -325,10 +353,21 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
                       {selection.topic && <span className="text-indigo-400"> · {selection.topic}</span>}
                       {drill && <span className="text-slate-500"> · {drill.length} article{drill.length === 1 ? '' : 's'}</span>}
                     </span>
-                    <button onClick={clearSelection} className="ml-auto p-1 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors" title="Close">
+                    {drill && drill.length > 0 && (
+                      <button onClick={summarizeDrill} disabled={drillSummarizing}
+                        className="ml-auto flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] text-indigo-300 border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 disabled:opacity-50 transition-colors"
+                        title="Summarize these articles">
+                        {drillSummarizing ? <Loader2 size={12} className="animate-spin" /> : <ScrollText size={12} />}
+                        Summarize
+                      </button>
+                    )}
+                    <button onClick={clearSelection} className={['p-1 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors', drill && drill.length > 0 ? '' : 'ml-auto'].join(' ')} title="Close">
                       <X size={13} />
                     </button>
                   </div>
+                  {drillSummaryError && (
+                    <div className="px-4 py-2 text-xs text-red-400 border-b border-[#1e2433]">{drillSummaryError}</div>
+                  )}
                   <div className="max-h-[340px] overflow-y-auto">
                     {drillLoading && (
                       <div className="flex items-center gap-2 text-xs text-slate-500 py-6 justify-center">
@@ -369,6 +408,17 @@ export default function SummaryTimeline({ filterType, filterValue, timeWindow, m
             </>
           )}
         </div>
+      )}
+
+      {drillSummary && (
+        <SummaryViewerModal
+          title={selection
+            ? [fmtTime(data!.buckets[selection.bucket].start, data!.bucket_seconds), selection.country, selection.topic].filter(Boolean).join(' · ')
+            : 'Summary'}
+          content={drillSummary.summary}
+          themes={drillSummary.key_themes}
+          onClose={() => setDrillSummary(null)}
+        />
       )}
     </div>
   )
