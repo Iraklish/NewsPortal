@@ -25,6 +25,7 @@ const nav = [
 export default function Sidebar() {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
+  const [navOpen, setNavOpen] = useState(true)
   const [prefsOpen, setPrefsOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatUsed, setChatUsed] = useState(false)
@@ -91,27 +92,39 @@ export default function Sidebar() {
           </button>
         </div>
 
-        {/* Nav links */}
-        <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-          {nav.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href || pathname.startsWith(href + '/')
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={[
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                  active
-                    ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5',
-                ].join(' ')}
-              >
-                <Icon size={16} />
-                {label}
-              </Link>
-            )
-          })}
-        </nav>
+        {/* Nav links (collapsible) */}
+        <div className="flex-1 overflow-y-auto">
+          <button
+            onClick={() => setNavOpen(v => !v)}
+            className="flex items-center gap-2 w-full px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 hover:text-white transition-colors"
+          >
+            {navOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <Menu size={12} className="text-indigo-400" />
+            Menu
+          </button>
+          {navOpen && (
+            <nav className="px-3 pb-3 space-y-0.5">
+              {nav.map(({ href, label, icon: Icon }) => {
+                const active = pathname === href || pathname.startsWith(href + '/')
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={[
+                      'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                      active
+                        ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30'
+                        : 'text-slate-400 hover:text-white hover:bg-white/5',
+                    ].join(' ')}
+                  >
+                    <Icon size={16} />
+                    {label}
+                  </Link>
+                )
+              })}
+            </nav>
+          )}
+        </div>
 
         {/* Preferences: language & font size (compact, collapsible) */}
         <div className="border-t border-[#1e2433]">
