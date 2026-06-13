@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart2, LineChart, Network, Settings, MessageSquare, MessageCircle, Newspaper, FileText, Menu, X, Send, Search, ScrollText, Languages, LogOut, UserCircle, Twitter, Type, Minus, Plus } from 'lucide-react'
+import { BarChart2, LineChart, Network, Settings, MessageSquare, MessageCircle, Newspaper, FileText, Menu, X, Send, Search, ScrollText, Languages, LogOut, UserCircle, Twitter, Type, Minus, Plus, ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import AIChatPanel from './AIChatPanel'
 import { useLanguage, LANGUAGES, Lang } from '@/lib/language'
@@ -25,6 +25,7 @@ const nav = [
 export default function Sidebar() {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
+  const [prefsOpen, setPrefsOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatUsed, setChatUsed] = useState(false)
   const { language, setLanguage } = useLanguage()
@@ -112,62 +113,77 @@ export default function Sidebar() {
           })}
         </nav>
 
-        {/* Global language selector */}
-        <div className="p-3 border-t border-[#1e2433]">
-          <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5 px-1">
-            <Languages size={13} className="text-indigo-400" />
-            Language
-          </label>
-          <select
-            value={language}
-            onChange={e => setLanguage(e.target.value as Lang)}
-            className={[
-              'w-full px-3 py-2 rounded-lg text-sm bg-[#0a0f1e] border outline-none transition-colors cursor-pointer',
-              language !== 'English'
-                ? 'border-indigo-500/40 text-indigo-300'
-                : 'border-[#1e2433] text-slate-300 hover:border-slate-600',
-            ].join(' ')}
+        {/* Preferences: language & font size (compact, collapsible) */}
+        <div className="border-t border-[#1e2433]">
+          <button
+            onClick={() => setPrefsOpen(v => !v)}
+            className="flex items-center gap-2 w-full px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 hover:text-white transition-colors"
           >
-            {LANGUAGES.map(l => (
-              <option key={l} value={l} className="bg-[#0d1117]">{l}</option>
-            ))}
-          </select>
-        </div>
+            {prefsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <SlidersHorizontal size={12} className="text-indigo-400" />
+            Preferences
+          </button>
+          {prefsOpen && (
+            <div className="px-3 pb-3 space-y-2.5">
+              {/* Language */}
+              <div>
+                <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1 px-1">
+                  <Languages size={11} className="text-indigo-400" />
+                  Language
+                </label>
+                <select
+                  value={language}
+                  onChange={e => setLanguage(e.target.value as Lang)}
+                  className={[
+                    'w-full px-2 py-1.5 rounded-lg text-xs bg-[#0a0f1e] border outline-none transition-colors cursor-pointer',
+                    language !== 'English'
+                      ? 'border-indigo-500/40 text-indigo-300'
+                      : 'border-[#1e2433] text-slate-300 hover:border-slate-600',
+                  ].join(' ')}
+                >
+                  {LANGUAGES.map(l => (
+                    <option key={l} value={l} className="bg-[#0d1117]">{l}</option>
+                  ))}
+                </select>
+              </div>
 
-        {/* Global font-size control */}
-        <div className="p-3 border-t border-[#1e2433]">
-          <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5 px-1">
-            <Type size={13} className="text-indigo-400" />
-            Font size
-          </label>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={decrease}
-              disabled={!canDecrease}
-              title="Smaller text"
-              aria-label="Decrease font size"
-              className="p-2 rounded-lg border border-[#1e2433] text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              <Minus size={14} />
-            </button>
-            <button
-              onClick={reset}
-              title="Reset to 100%"
-              aria-label="Reset font size"
-              className="flex-1 px-2 py-2 rounded-lg border border-[#1e2433] text-xs font-medium text-slate-300 hover:text-white hover:border-slate-600 transition-colors"
-            >
-              {scale}%
-            </button>
-            <button
-              onClick={increase}
-              disabled={!canIncrease}
-              title="Larger text"
-              aria-label="Increase font size"
-              className="p-2 rounded-lg border border-[#1e2433] text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              <Plus size={14} />
-            </button>
-          </div>
+              {/* Font size */}
+              <div>
+                <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1 px-1">
+                  <Type size={11} className="text-indigo-400" />
+                  Font size
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={decrease}
+                    disabled={!canDecrease}
+                    title="Smaller text"
+                    aria-label="Decrease font size"
+                    className="p-1.5 rounded-lg border border-[#1e2433] text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Minus size={12} />
+                  </button>
+                  <button
+                    onClick={reset}
+                    title="Reset to 100%"
+                    aria-label="Reset font size"
+                    className="flex-1 px-2 py-1.5 rounded-lg border border-[#1e2433] text-[11px] font-medium text-slate-300 hover:text-white hover:border-slate-600 transition-colors"
+                  >
+                    {scale}%
+                  </button>
+                  <button
+                    onClick={increase}
+                    disabled={!canIncrease}
+                    title="Larger text"
+                    aria-label="Increase font size"
+                    className="p-1.5 rounded-lg border border-[#1e2433] text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Plus size={12} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* AI Chat button */}
