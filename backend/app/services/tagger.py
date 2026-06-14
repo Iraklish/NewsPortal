@@ -63,7 +63,7 @@ async def ai_extract_tags(article: Article, db, max_retries: int = 5) -> list[st
     Raises on a hard failure (e.g. AI provider/API error) so callers can tell a
     real error apart from an empty result and surface a meaningful message.
     """
-    from .ai_client import call_ai
+    from .ai_client import call_ai, get_ai_settings_for_task
 
     title = article.title or "(no title)"
     excerpt = (article.content or article.summary or "")[:1000]
@@ -85,11 +85,12 @@ async def ai_extract_tags(article: Article, db, max_retries: int = 5) -> list[st
     # Call the AI, retrying on transient rate-limit/quota errors while honoring
     # any server-suggested retry delay ("retry in Xs"). Non-rate-limit errors
     # propagate immediately so callers can tell a real failure from "no tags".
+    ai_provider, ai_model = await get_ai_settings_for_task("tagging", db)
     raw = None
     attempt = 0
     while True:
         try:
-            raw = await call_ai(system=system, user=user, max_tokens=500, db=db)
+            raw = await call_ai(system=system, user=user, max_tokens=500, provider=ai_provider, model=ai_model, db=db)
             break
         except asyncio.CancelledError:
             raise

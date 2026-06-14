@@ -30,7 +30,7 @@ from ..schemas import (
     ReportAskRequest,
 )
 from ..services.analyzer import analyze_article, run_directed_analysis
-from ..services.ai_client import call_ai, call_ai_grounded, call_ai_vision
+from ..services.ai_client import call_ai, call_ai_grounded, call_ai_vision, get_ai_settings_for_task
 from ..services.directed_report import count_db_articles, run_directed_report
 from ..services.search_service import fetch_url, multi_engine_search
 
@@ -224,7 +224,8 @@ async def ask_about_report(
         user_prompt = "Conversation so far:\n" + "\n".join(history_lines) + f"\n\nQuestion: {body.question}"
 
     try:
-        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("ask", db)
+        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Report ask failed for report %s: %s", report_id, exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -348,7 +349,7 @@ async def generate_summary(
 
     if len(articles) > chunk_size:
         try:
-            final_text, _ = await _chained_analysis(header, articles, system, db, chunk_size=chunk_size)
+            final_text, _ = await _chained_analysis(header, articles, system, db, chunk_size=chunk_size, task="summary")
         except Exception as exc:
             logger.error("Chained summary AI call failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -368,7 +369,8 @@ async def generate_summary(
         user = f"{header}\n\n{context_block}"
 
         try:
-            raw = await call_ai(system=system, user=user, max_tokens=4096, db=db)
+            ai_provider, ai_model = await get_ai_settings_for_task("summary", db)
+            raw = await call_ai(system=system, user=user, max_tokens=4096, provider=ai_provider, model=ai_model, db=db)
         except Exception as exc:
             logger.error("Summary AI call failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -435,7 +437,8 @@ async def ask_about_summary(
         user_prompt = "Conversation history:\n" + "\n".join(history_lines) + f"\n\nQuestion: {user_prompt}"
 
     try:
-        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("ask", db)
+        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Summary ask AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -1150,15 +1153,16 @@ async def ask_about_article(
             image_bytes = None
 
     try:
+        ai_provider, ai_model = await get_ai_settings_for_task("ask", db)
         if image_bytes:
             vision_system = system + "\n\nAN IMAGE FROM THE POST IS ATTACHED. Use it to answer questions about the picture."
             try:
-                response_text = await call_ai_vision(system=vision_system, user=user_prompt, image_bytes=image_bytes, mime=mime, max_tokens=1200, db=db)
+                response_text = await call_ai_vision(system=vision_system, user=user_prompt, image_bytes=image_bytes, mime=mime, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
             except Exception as vexc:
                 logger.warning("Ask-article vision call failed, falling back to text: %s", vexc)
-                response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+                response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
         else:
-            response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+            response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Ask-article AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -1263,7 +1267,8 @@ async def factcheck_article(
     user_prompt = "Fact-check the article above and report your findings."
 
     try:
-        grounded = await call_ai_grounded(system=system, user=user_prompt, max_tokens=2000, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("factcheck", db)
+        grounded = await call_ai_grounded(system=system, user=user_prompt, max_tokens=2000, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Fact-check AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -1387,7 +1392,8 @@ async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db
         ctx = (article.content or article.title or "").strip()[:1500]
         user = f"Post text for context:\n{ctx}\n\nAnalyze the attached image."
         try:
-            text = await call_ai_vision(system=system, user=user, image_bytes=image_bytes, mime=mime, db=db)
+            ai_provider, ai_model = await get_ai_settings_for_task("image_analysis", db)
+            text = await call_ai_vision(system=system, user=user, image_bytes=image_bytes, mime=mime, provider=ai_provider, model=ai_model, db=db)
         except Exception as exc:
             logger.error("Attachment image analysis failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"Image analysis failed: {exc}")
@@ -1414,7 +1420,8 @@ async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db
             f"Linked article content:\n{content}"
         )
         try:
-            text = await call_ai(system=system, user=user, max_tokens=1500, db=db)
+            ai_provider, ai_model = await get_ai_settings_for_task("link_analysis", db)
+            text = await call_ai(system=system, user=user, max_tokens=1500, provider=ai_provider, model=ai_model, db=db)
         except Exception as exc:
             logger.error("Attachment link analysis failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"Link analysis failed: {exc}")
@@ -1710,6 +1717,7 @@ _MAX_SUMMARY_ARTICLES = 50000   # ceiling for "All" max_articles on /summary
 async def _map_chunk(
     idx: int, n_chunks: int, chunk: list[Article], start_index: int,
     message: str, base_prompt: str, db, sem: asyncio.Semaphore,
+    ai_provider: Optional[str] = None, ai_model: Optional[str] = None,
 ) -> str:
     """Map step: summarize one batch of articles into a short digest."""
     from ..services.tagger import _is_rate_limit_error, _parse_retry_delay
@@ -1725,7 +1733,7 @@ async def _map_chunk(
     async with sem:
         for attempt in range(3):
             try:
-                return await call_ai(system=system, user=user, max_tokens=700, db=db)
+                return await call_ai(system=system, user=user, max_tokens=700, provider=ai_provider, model=ai_model, db=db)
             except Exception as exc:
                 if _is_rate_limit_error(str(exc)) and attempt < 2:
                     await asyncio.sleep(min((_parse_retry_delay(str(exc)) or 5) + 1, 30))
@@ -1735,13 +1743,15 @@ async def _map_chunk(
 
 async def _chained_analysis(
     message: str, articles: list[Article], base_prompt: str, db, chunk_size: int = _CHAT_CHUNK_SIZE,
+    task: str = "summary",
 ) -> tuple[str, list[dict]]:
     """Map-reduce bulk analysis: digest each batch, then synthesize the digests."""
+    ai_provider, ai_model = await get_ai_settings_for_task(task, db)
     chunk_size = max(50, chunk_size)
     chunks = [articles[i:i + chunk_size] for i in range(0, len(articles), chunk_size)]
     sem = asyncio.Semaphore(_CHAIN_CONCURRENCY)
     tasks = [
-        _map_chunk(i, len(chunks), c, i * chunk_size + 1, message, base_prompt, db, sem)
+        _map_chunk(i, len(chunks), c, i * chunk_size + 1, message, base_prompt, db, sem, ai_provider, ai_model)
         for i, c in enumerate(chunks)
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1758,7 +1768,7 @@ async def _chained_analysis(
         f"countries/topics. Cite [A-N] where useful. Be specific; avoid vague filler."
     )
     reduce_user = f"User request: {message}\n\n=== BATCH DIGESTS ===\n{joined}"
-    final = await call_ai(system=reduce_system, user=reduce_user, max_tokens=4096, db=db)
+    final = await call_ai(system=reduce_system, user=reduce_user, max_tokens=4096, provider=ai_provider, model=ai_model, db=db)
 
     note = f"_Analyzed {len(articles)} articles in {len(chunks)} batches of {chunk_size}"
     note += f" ({failed} batch(es) skipped due to errors)._\n\n" if failed else "._\n\n"
@@ -1792,7 +1802,8 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
         )
 
         try:
-            grounded = await call_ai_grounded(system=system, user=user_prompt, max_tokens=2000, db=db)
+            ai_provider, ai_model = await get_ai_settings_for_task("chat", db)
+            grounded = await call_ai_grounded(system=system, user=user_prompt, max_tokens=2000, provider=ai_provider, model=ai_model, db=db)
         except Exception as exc:
             logger.error("Chat AI (grounded) call failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -1824,7 +1835,7 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
         articles, _scope = _gather_chat_articles(body.message, db, limit=min(requested, _MAX_CHAINED_ARTICLES))
         if len(articles) > chunk_size:
             try:
-                text, refs = await _chained_analysis(body.message, articles, base_prompt, db, chunk_size=chunk_size)
+                text, refs = await _chained_analysis(body.message, articles, base_prompt, db, chunk_size=chunk_size, task="chat")
             except Exception as exc:
                 logger.error("Chained chat analysis failed: %s", exc)
                 raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -1862,7 +1873,8 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
     )
 
     try:
-        raw = await call_ai(system=system, user=user_prompt, max_tokens=1500, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("chat", db)
+        raw = await call_ai(system=system, user=user_prompt, max_tokens=1500, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Chat AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")

@@ -183,6 +183,9 @@ class SettingsUpdate(BaseModel):
     telegram_phone: Optional[str] = None
     default_ai_provider: Optional[str] = None
     default_ai_model: Optional[str] = None
+    secondary_ai_provider: Optional[str] = None
+    secondary_ai_model: Optional[str] = None
+    ai_task_assignments: Optional[dict[str, str]] = None
     chat_system_prompt: Optional[str] = None
     ask_system_prompt: Optional[str] = None
     directed_report_system_prompt: Optional[str] = None
@@ -221,6 +224,10 @@ class AppSettingsOut(BaseModel):
     telegram_phone: KeyStatus
     default_ai_provider: str
     default_ai_model: str
+    secondary_ai_provider: str
+    secondary_ai_model: str
+    ai_task_assignments: dict[str, str]
+    ai_tasks: dict[str, str]
     custom_ai_endpoint: Optional[str] = None
     custom_ai_model: Optional[str] = None
     chat_system_prompt: str

@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..models import Analysis, Article
-from .ai_client import call_ai, get_current_ai_settings
+from .ai_client import call_ai, get_ai_settings_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +106,9 @@ async def analyze_article(article: Article, db: Session, focus: Optional[str] = 
     """Analyze a single article and persist the Analysis record. Returns the analysis dict."""
     system, user = _build_analysis_prompt(article, focus)
 
+    provider, model_name = await get_ai_settings_for_task("analyze", db)
     try:
-        raw = await call_ai(system=system, user=user, max_tokens=3000, db=db)
+        raw = await call_ai(system=system, user=user, max_tokens=3000, provider=provider, model=model_name, db=db)
         data = _parse_json_response(raw)
     except Exception as exc:
         logger.error("AI call failed for article %s: %s", article.id, exc)
@@ -120,8 +121,6 @@ async def analyze_article(article: Article, db: Session, focus: Optional[str] = 
     impact_type = data.get("impact_type", "neutral")
     if impact_type not in _IMPACT_LEVELS:
         impact_type = "neutral"
-
-    provider, model_name = await get_current_ai_settings(db)
 
     analysis = Analysis(
         article_id=article.id,

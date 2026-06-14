@@ -56,6 +56,22 @@ def _get_api_key(key_name: str, db=None) -> str:
     return getattr(settings, key_name, "")
 
 
+async def get_ai_settings_for_task(task: str, db=None) -> tuple[str, str]:
+    """Return (provider, model) for a given AI task, honoring the per-task
+    primary/secondary routing configured in Settings. Falls back to the
+    primary provider/model when no secondary is configured or assigned."""
+    provider, model = await get_current_ai_settings(db)
+
+    assignment = _get_api_key(f"ai_task_{task}", db) or "primary"
+    if assignment == "secondary":
+        sec_provider = _get_api_key("secondary_ai_provider", db)
+        sec_model = _get_api_key("secondary_ai_model", db)
+        if sec_provider:
+            return sec_provider, sec_model or model
+
+    return provider, model
+
+
 # ── Provider implementations ──────────────────────────────────────────────────
 
 def _call_anthropic(api_key: str, model: str, system: str, user: str, max_tokens: int) -> str:
@@ -263,13 +279,16 @@ def _vision_gemini(api_key, model, system, user, image_bytes, mime, max_tokens):
 
 
 async def call_ai_vision(system: str, user: str, image_bytes: bytes, mime: str = "image/jpeg",
-                         max_tokens: int = 1500, db=None) -> str:
+                         max_tokens: int = 1500, provider: Optional[str] = None,
+                         model: Optional[str] = None, db=None) -> str:
     """Analyze an image with the configured (vision-capable) provider.
 
     Supports Anthropic, OpenAI/custom/DeepSeek (OpenAI-compatible), and Gemini.
     """
     import base64
-    provider, model = await get_current_ai_settings(db)
+    resolved_provider, resolved_model = await get_current_ai_settings(db)
+    provider = provider or resolved_provider
+    model = model or resolved_model
     loop = asyncio.get_event_loop()
     b64 = base64.b64encode(image_bytes).decode()
 

@@ -170,7 +170,7 @@ async def ask_about_stock(
     db: Session = Depends(get_db),
 ):
     """Answer follow-up questions about a stock using the latest stored analysis as context."""
-    from ..services.ai_client import call_ai
+    from ..services.ai_client import call_ai, get_ai_settings_for_task
 
     ticker = ticker.upper()
     analysis = (
@@ -224,7 +224,8 @@ async def ask_about_stock(
         user_prompt = "Conversation so far:\n" + "\n".join(history_lines) + f"\n\nQuestion: {body.question}"
 
     try:
-        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("ask", db)
+        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Stock ask failed for %s: %s", ticker, exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")

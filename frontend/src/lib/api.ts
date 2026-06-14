@@ -294,6 +294,10 @@ export interface KeyStatus {
 export interface AppSettingsOut {
   default_ai_provider: string
   default_ai_model: string
+  secondary_ai_provider: string
+  secondary_ai_model: string
+  ai_task_assignments: Record<string, string>
+  ai_tasks: Record<string, string>
   anthropic_api_key: KeyStatus
   openai_api_key: KeyStatus
   gemini_api_key: KeyStatus
@@ -347,6 +351,9 @@ export interface AppSettingsOut {
 export interface SettingsUpdate {
   default_ai_provider?: string
   default_ai_model?: string
+  secondary_ai_provider?: string
+  secondary_ai_model?: string
+  ai_task_assignments?: Record<string, string>
   anthropic_api_key?: string
   openai_api_key?: string
   gemini_api_key?: string

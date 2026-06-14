@@ -70,7 +70,7 @@ async def summarize_results(body: WebSummarizeRequest, db: Session = Depends(get
         raise HTTPException(status_code=400, detail="No results provided to summarize")
     used = results[:_MAX_SUMMARIZE]
 
-    from ..services.ai_client import call_ai
+    from ..services.ai_client import call_ai, get_ai_settings_for_task
 
     lines: list[str] = []
     for i, r in enumerate(used, 1):
@@ -101,7 +101,8 @@ async def summarize_results(body: WebSummarizeRequest, db: Session = Depends(get
     )
 
     try:
-        text = await call_ai(system=system, user=user, max_tokens=2000, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("search", db)
+        text = await call_ai(system=system, user=user, max_tokens=2000, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("[search] summarize AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
