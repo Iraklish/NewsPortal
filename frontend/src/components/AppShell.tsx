@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import Sidebar from '@/components/Sidebar'
 import { useAuth } from '@/lib/auth'
+import { useSidebar } from '@/lib/sidebar'
 
 /**
  * Auth gate + app chrome.
@@ -15,6 +16,7 @@ import { useAuth } from '@/lib/auth'
  */
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { user, ready } = useAuth()
+  const { collapsed } = useSidebar()
   const pathname = usePathname()
   const router = useRouter()
   const isSignin = pathname === '/signin'
@@ -42,7 +44,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Sidebar />
-      <main className="md:ml-64 min-h-screen p-4 md:p-6 pt-16 md:pt-6">
+      <main className={[collapsed ? 'md:ml-16' : 'md:ml-64', 'min-h-screen p-4 md:p-6 pt-16 md:pt-6 transition-[margin] duration-200'].join(' ')}>
         {children}
       </main>
     </>

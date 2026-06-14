@@ -225,13 +225,105 @@ async def verify_session() -> dict:
         return {"ok": False, "error": str(exc)[:300]}
 
 
-def _media_urls(tweet) -> list[str]:
-    urls: list[str] = []
-    for m in (getattr(tweet, "media", None) or []):
-        u = getattr(m, "media_url", None)
-        if u:
-            urls.append(u)
-    return urls
+def _best_variant_url(entry: dict) -> str | None:
+    """Pick the highest-bitrate playable URL for a video / animated_gif entry."""
+    variants = ((entry.get("video_info") or {}).get("variants")) or []
+    best, best_br = None, -1
+    for v in variants:
+        url = v.get("url")
+        if not url:
+            continue
+        ctype = v.get("content_type") or ""
+        br = v.get("bitrate") or 0
+        # Prefer progressive mp4; treat m3u8 (bitrate often absent) as last resort.
+        score = br if "mp4" in ctype else -1
+        if score > best_br:
+            best_br, best = score, url
+    return best
+
+
+def _extract_media(tw) -> tuple[list[str], str | None]:
+    """Return (media_urls, poster_image_url) for ALL media on a tweet.
+
+    twikit's ``Tweet.media`` reads ``entities.media`` which only ever holds the
+    first item; the complete set (up to 4) lives in ``extended_entities.media``.
+    We read that directly and, for videos/GIFs, resolve the best playable URL
+    (not just the static thumbnail). ``poster`` is the first image we can show.
+    """
+    media_urls: list[str] = []
+    poster: str | None = None
+    try:
+        entries = (tw._legacy.get("extended_entities") or {}).get("media") or []
+    except Exception:
+        entries = []
+    if not entries:
+        try:
+            entries = (tw._legacy.get("entities") or {}).get("media") or []
+        except Exception:
+            entries = []
+
+    for entry in entries:
+        mtype = entry.get("type")
+        thumb = entry.get("media_url_https") or entry.get("media_url")
+        if mtype in ("video", "animated_gif"):
+            playable = _best_variant_url(entry)
+            if playable:
+                media_urls.append(playable)
+            if thumb:
+                poster = poster or thumb
+        else:  # photo (or unknown → treat as image)
+            if thumb:
+                media_urls.append(thumb)
+                poster = poster or thumb
+
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    ordered = [u for u in media_urls if not (u in seen or seen.add(u))]
+    return ordered, poster
+
+
+def _post_text(tw) -> str:
+    """Full tweet text, expanding long-form note tweets (full_text handles this)."""
+    return (getattr(tw, "full_text", None) or getattr(tw, "text", "") or "").strip()
+
+
+def _extract_post(tw) -> tuple[str, list[str], str | None]:
+    """Assemble the WHOLE post: full text + all media, unwrapping retweets and
+    appending quoted-tweet text/media so nothing is lost.
+
+    Returns (text, media_urls, image_url).
+    """
+    # Retweets carry a truncated "RT @user: …" body; pull the original instead.
+    rt = None
+    try:
+        rt = tw.retweeted_tweet
+    except Exception:
+        rt = None
+    base = rt or tw
+
+    text = _post_text(base)
+    media, poster = _extract_media(base)
+    if rt is not None:
+        rt_author = getattr(getattr(rt, "user", None), "screen_name", None)
+        text = f"RT @{rt_author}: {text}" if rt_author else text
+
+    # Append a quoted tweet's content (quote tweets embed another post).
+    quoted = None
+    try:
+        quoted = tw.quote
+    except Exception:
+        quoted = None
+    if quoted is not None:
+        q_text = _post_text(quoted)
+        q_media, q_poster = _extract_media(quoted)
+        q_author = getattr(getattr(quoted, "user", None), "screen_name", None)
+        header = f"\n\n— Quoting @{q_author}:" if q_author else "\n\n— Quoting:"
+        if q_text or q_media:
+            text = (text + header + (f"\n{q_text}" if q_text else "")).strip()
+            media = media + [m for m in q_media if m not in media]
+            poster = poster or q_poster
+
+    return text, media, poster
 
 
 def _tweet_url(screen_name: str, tweet_id) -> str:
@@ -274,8 +366,7 @@ async def fetch_twitter_source(source: TwitterSource, db: Session, client=None) 
         if ts and ts < cutoff:
             continue
 
-        text = (getattr(tw, "full_text", None) or getattr(tw, "text", "") or "").strip()
-        media = _media_urls(tw)
+        text, media, image_url = _extract_post(tw)
         if not text and not media:
             continue
 
@@ -296,7 +387,7 @@ async def fetch_twitter_source(source: TwitterSource, db: Session, client=None) 
             category="twitter",
             published_at=ts,
             content=text,
-            image_url=media[0] if media else None,
+            image_url=image_url or (media[0] if media else None),
             media_urls=media,
             is_analyzed=False,
         )

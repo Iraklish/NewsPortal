@@ -15,7 +15,7 @@ from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from ..models import AppSettings, Article, DirectedReport
-from .ai_client import call_ai, call_ai_grounded, get_current_ai_settings
+from .ai_client import call_ai, call_ai_grounded, get_ai_settings_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +204,8 @@ async def _map_condense_batch(focus: str, batch: list[Article], start_idx: int,
     )
     async with sem:
         try:
-            return await call_ai(system=system, user=user, max_tokens=1200, db=db)
+            ai_provider, ai_model = await get_ai_settings_for_task("analyze", db)
+            return await call_ai(system=system, user=user, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
         except Exception as exc:
             logger.warning("[report] map step failed for batch @%d: %s", start_idx, exc)
             # Degrade gracefully: keep the batch as short raw excerpts so it isn't lost.
@@ -467,6 +468,8 @@ async def run_directed_report(
     context_text, references = _assemble_context(db_context, db_refs, explicit_web_results)
     system, user = _build_prompts(focus, context_text, _custom_system_prompt, language)
 
+    ai_provider, ai_model = await get_ai_settings_for_task("analyze", db)
+
     grounded_used = False
     if include_web:
         # ── Step 1: attempt AI-native grounding ─────────────────────────────
@@ -476,7 +479,7 @@ async def run_directed_report(
             f"about \"{focus}\" beyond the database context. Combine both sources into one "
             "coherent synthesis."
         )
-        grounded = await call_ai_grounded(system=system_grounded, user=user, max_tokens=4000, db=db)
+        grounded = await call_ai_grounded(system=system_grounded, user=user, max_tokens=4000, provider=ai_provider, model=ai_model, db=db)
         raw = grounded.text
         grounded_used = grounded.provider_used_grounding
 
@@ -511,7 +514,7 @@ async def run_directed_report(
                 # so the AI sees web snippets as [WEB-N] blocks it can cite.
                 context_text, references = _assemble_context(db_context, db_refs, fallback_results)
                 system, user = _build_prompts(focus, context_text, _custom_system_prompt, language)
-                raw = await call_ai(system=system, user=user, max_tokens=4000, db=db)
+                raw = await call_ai(system=system, user=user, max_tokens=4000, provider=ai_provider, model=ai_model, db=db)
             else:
                 logger.warning(
                     "[report] search fallback also returned 0 results for '%s'; "
@@ -519,7 +522,7 @@ async def run_directed_report(
                     focus[:80],
                 )
     else:
-        raw = await call_ai(system=system, user=user, max_tokens=4000, db=db)
+        raw = await call_ai(system=system, user=user, max_tokens=4000, provider=ai_provider, model=ai_model, db=db)
 
     data = _parse_json(raw)
 
@@ -527,7 +530,7 @@ async def run_directed_report(
     if impact_type not in _IMPACT_LEVELS:
         impact_type = "neutral"
 
-    _, model_name = await get_current_ai_settings(db)
+    model_name = ai_model
 
     report = DirectedReport(
         focus=focus,

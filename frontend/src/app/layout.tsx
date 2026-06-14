@@ -4,7 +4,9 @@ import './globals.css'
 import AppShell from '@/components/AppShell'
 import ErrorLoggerBoot from '@/components/ErrorLoggerBoot'
 import { LanguageProvider } from '@/lib/language'
+import { FontSizeProvider } from '@/lib/fontsize'
 import { AuthProvider } from '@/lib/auth'
+import { SidebarProvider } from '@/lib/sidebar'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -20,7 +22,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ErrorLoggerBoot />
         <AuthProvider>
           <LanguageProvider>
-            <AppShell>{children}</AppShell>
+            <FontSizeProvider>
+              <SidebarProvider>
+                <AppShell>{children}</AppShell>
+              </SidebarProvider>
+            </FontSizeProvider>
           </LanguageProvider>
         </AuthProvider>
       </body>

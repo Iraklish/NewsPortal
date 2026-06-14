@@ -4,11 +4,13 @@ import {
   ScrollText, Tag, Layers, Search, Sparkles, RefreshCw,
   ChevronRight, Clock, FileText, ExternalLink,
   ChevronDown, MessageSquare, Send, User, Bot, SlidersHorizontal, Filter, Maximize2, Minimize2, Plus, X,
+  ShieldCheck, Loader2,
 } from 'lucide-react'
-import { analysisApi, articlesApi, settingsApi, SummaryResponse } from '@/lib/api'
+import { analysisApi, articlesApi, settingsApi, sourcesApi, Article, SummaryResponse } from '@/lib/api'
 import SummaryMarkdown from '@/components/SummaryMarkdown'
 import MessageContent from '@/components/MessageContent'
 import SummaryViewerModal from '@/components/SummaryViewerModal'
+import SummaryTimeline from '@/components/SummaryTimeline'
 import { useLanguage } from '@/lib/language'
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -46,6 +48,24 @@ const MAX_ARTICLES_OPTIONS = [
 ]
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+function relTime(iso?: string | null): string {
+  if (!iso) return 'never'
+  const ms = iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso) ? new Date(iso).getTime() : new Date(iso + 'Z').getTime()
+  const diff = Date.now() - ms
+  if (diff < 0) {
+    const min = Math.round(Math.abs(diff) / 60000)
+    if (min < 1) return 'in <1 min'
+    if (min < 60) return `in ${min} min`
+    return `in ${Math.round(min / 60)} h`
+  }
+  const min = Math.round(diff / 60000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  const h = Math.round(min / 60)
+  if (h < 24) return `${h} h ago`
+  return `${Math.round(h / 24)} d ago`
+}
 
 function PillBtn({
   active, onClick, children,
@@ -98,7 +118,7 @@ function AccordionToggle({
 
 export default function SummaryPage() {
   // primary controls
-  const [timeWindow, setTimeWindow]   = useState(6)
+  const [timeWindow, setTimeWindow]   = useState(1)
   const [maxArticles, setMaxArticles] = useState(0)   // 0 = All
   const { language }                  = useLanguage()
 
@@ -124,9 +144,23 @@ export default function SummaryPage() {
   const [result, setResult]           = useState<SummaryResponse | null>(null)
   const [viewerOpen, setViewerOpen]   = useState(false)
 
+  // source articles (collapsed by default) + per-article fact-check state
+  const [sourcesOpen, setSourcesOpen] = useState(false)
+  const [sourceSearch, setSourceSearch] = useState('')
+  const [factChecks, setFactChecks]   = useState<Record<number, { loading: boolean; text?: string; error?: string }>>({})
+
+  // local article viewer (modal)
+  const [viewArticleOpen, setViewArticleOpen]       = useState(false)
+  const [viewArticle, setViewArticle]               = useState<Article | null>(null)
+  const [viewArticleLoading, setViewArticleLoading] = useState(false)
+  const [viewArticleError, setViewArticleError]     = useState<string | null>(null)
+
   // autocomplete
   const [categories, setCategories]   = useState<string[]>([])
   const [tags, setTags]               = useState<string[]>([])
+
+  // fetch status (last fetch indicator)
+  const [status, setStatus] = useState<{ last_fetch_at?: string | null; next_fetch_at?: string | null; ok: number; total: number; enabled: number } | null>(null)
 
   // chat
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([])
@@ -140,6 +174,14 @@ export default function SummaryPage() {
     articlesApi.categories().then(c => setCategories(c.sort())).catch(() => {})
     articlesApi.tags().then(t => setTags(t.sort())).catch(() => {})
     settingsApi.getSummaryPresets().then(r => setPresets(r.presets)).catch(() => {})
+  }, [])
+
+  // Poll fetch status for the "Last fetch" indicator (refresh every 30s).
+  useEffect(() => {
+    const loadStatus = () => { sourcesApi.status().then(setStatus).catch(() => {}) }
+    loadStatus()
+    const id = setInterval(loadStatus, 30000)
+    return () => clearInterval(id)
   }, [])
 
   async function persistPresets(next: string[]) {
@@ -178,6 +220,31 @@ export default function SummaryPage() {
     persistPresets(presets.filter(x => x !== p))
   }
 
+  async function openArticleView(articleId: number) {
+    setViewArticleOpen(true)
+    setViewArticle(null)
+    setViewArticleError(null)
+    setViewArticleLoading(true)
+    try {
+      const a = await articlesApi.get(articleId)
+      setViewArticle(a)
+    } catch (e: unknown) {
+      setViewArticleError(e instanceof Error ? e.message : 'Failed to load article')
+    } finally {
+      setViewArticleLoading(false)
+    }
+  }
+
+  async function runFactCheck(articleId: number) {
+    setFactChecks(prev => ({ ...prev, [articleId]: { loading: true } }))
+    try {
+      const res = await analysisApi.factCheckArticle(articleId, language !== 'English' ? language : undefined)
+      setFactChecks(prev => ({ ...prev, [articleId]: { loading: false, text: res.response } }))
+    } catch (e: unknown) {
+      setFactChecks(prev => ({ ...prev, [articleId]: { loading: false, error: e instanceof Error ? e.message : 'Fact-check failed' } }))
+    }
+  }
+
   useEffect(() => { setFilterValue('') }, [filterType])
 
   useEffect(() => {
@@ -200,12 +267,30 @@ export default function SummaryPage() {
     ? suggestions.filter(s => s.toLowerCase().includes(filterValue.toLowerCase())).slice(0, 10)
     : suggestions.slice(0, 10)
 
+  const filteredSources = (() => {
+    const sources = result?.sources ?? []
+    const q = sourceSearch.trim().toLowerCase()
+    if (!q) return sources
+    return sources.filter(s =>
+      (s.title || '').toLowerCase().includes(q) ||
+      (s.source || '').toLowerCase().includes(q) ||
+      (s.url || '').toLowerCase().includes(q)
+    )
+  })()
+
   // ── generate ─────────────────────────────────────────────────────────────
   const generate = useCallback(async () => {
+    // Collapse the optional sections so the result is front-and-centre.
+    setShowFilter(false)
+    setShowPresets(false)
+    setShowPrompt(false)
     setLoading(true)
     setError(null)
     setResult(null)
     setChatMessages([])
+    setSourcesOpen(false)
+    setSourceSearch('')
+    setFactChecks({})
     try {
       const res = await analysisApi.summarize({
         filter_type: filterType,
@@ -255,16 +340,29 @@ export default function SummaryPage() {
     <div className="flex flex-col gap-6 p-6 max-w-4xl mx-auto">
 
       {/* ── Header ───────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3">
-        <div className="p-2.5 bg-indigo-600/20 rounded-xl border border-indigo-500/30">
-          <ScrollText size={20} className="text-indigo-400" />
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-indigo-600/20 rounded-xl border border-indigo-500/30">
+            <ScrollText size={20} className="text-indigo-400" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-white">Article Summary</h1>
+            <p className="text-sm text-slate-500">
+              AI summary of recent articles — pick a window and generate
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-bold text-white">Article Summary</h1>
-          <p className="text-sm text-slate-500">
-            AI summary of recent articles — pick a window and generate
-          </p>
-        </div>
+        {status && (
+          <div
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0d1117] border border-[#1e2433] rounded-lg text-xs"
+            title={status.last_fetch_at ? `${status.ok}/${status.enabled} feeds returning content — next scheduled ${relTime(status.next_fetch_at)}` : 'No fetch has run yet'}
+          >
+            <Clock size={11} className="text-slate-500" />
+            <span className="text-slate-500">Last fetch:</span>
+            <span className="text-slate-200 font-medium">{relTime(status.last_fetch_at)}</span>
+            <span className="text-slate-600 ml-1">· {status.ok}/{status.enabled} feeds</span>
+          </div>
+        )}
       </div>
 
       {/* ── Controls card ────────────────────────────────────────────────── */}
@@ -524,6 +622,14 @@ export default function SummaryPage() {
             </span>
           </div>
 
+          {/* Configurable timeline + heatmap (collapsible) */}
+          <SummaryTimeline
+            filterType={filterType}
+            filterValue={showFilter ? filterValue.trim() : ''}
+            timeWindow={timeWindow}
+            maxArticles={maxArticles}
+          />
+
           {/* Summary text */}
           <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5">
             <div className="flex items-center justify-between mb-4">
@@ -707,45 +813,119 @@ export default function SummaryPage() {
 
           {/* Source articles */}
           {result.sources.length > 0 && (
-            <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5">
-              <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-3">
-                Source Articles ({result.sources.length})
-              </h2>
-              <div>
-                {result.sources.map((s, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-3 py-2.5 border-b border-[#1e2433] last:border-0"
-                  >
-                    <ChevronRight size={12} className="text-slate-600 mt-0.5 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      {s.url && s.url.startsWith('http') ? (
-                        <a
-                          href={s.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sm text-white hover:text-indigo-400 transition-colors flex items-center gap-1.5 group"
-                        >
-                          <span className="line-clamp-1">{s.title || s.url}</span>
-                          <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
-                        </a>
-                      ) : (
-                        <span className="text-sm text-white line-clamp-1">{s.title || s.url}</span>
-                      )}
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {s.source && <span className="text-xs text-slate-500">{s.source}</span>}
-                        {s.published_at && (
-                          <span className="text-xs text-slate-600">
-                            {new Date(s.published_at).toLocaleDateString(undefined, {
-                              month: 'short', day: 'numeric', year: 'numeric',
-                            })}
-                          </span>
-                        )}
-                      </div>
-                    </div>
+            <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl overflow-hidden">
+              <button
+                onClick={() => setSourcesOpen(v => !v)}
+                className="flex items-center gap-2 w-full px-5 py-3.5 text-left hover:bg-white/[0.02] transition-colors"
+                title={sourcesOpen ? 'Collapse' : 'Expand'}
+              >
+                {sourcesOpen ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />}
+                <h2 className="text-xs text-slate-500 uppercase tracking-wider font-medium">
+                  Source Articles ({filteredSources.length}{filteredSources.length !== result.sources.length ? ` / ${result.sources.length}` : ''})
+                </h2>
+              </button>
+              {sourcesOpen && (
+                <div className="px-5 pb-5 border-t border-[#1e2433] pt-3 space-y-2">
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-600" />
+                    <input
+                      value={sourceSearch}
+                      onChange={e => setSourceSearch(e.target.value)}
+                      placeholder="Search source articles…"
+                      className="w-full bg-[#161b22] border border-[#1e2433] rounded-lg pl-8 pr-8 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/50"
+                    />
+                    {sourceSearch && (
+                      <button onClick={() => setSourceSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-white" title="Clear">
+                        <X size={12} />
+                      </button>
+                    )}
                   </div>
-                ))}
-              </div>
+                  <div className="max-h-[600px] overflow-y-auto">
+                  {filteredSources.length === 0 && (
+                    <div className="text-xs text-slate-600 italic py-4 text-center">No source articles match &quot;{sourceSearch}&quot;.</div>
+                  )}
+                  {filteredSources.map((s, i) => {
+                    const fc = s.id != null ? factChecks[s.id] : undefined
+                    return (
+                      <div
+                        key={i}
+                        className="py-2.5 border-b border-[#1e2433] last:border-0"
+                      >
+                        <div className="flex items-start gap-3">
+                          <ChevronRight size={12} className="text-slate-600 mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            {s.url && s.url.startsWith('http') ? (
+                              <a
+                                href={s.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-white hover:text-indigo-400 transition-colors line-clamp-1"
+                              >
+                                {s.title || s.url}
+                              </a>
+                            ) : (
+                              <span className="text-sm text-white line-clamp-1">{s.title || s.url}</span>
+                            )}
+                            <div className="flex items-center gap-2 mt-0.5">
+                              {s.source && <span className="text-xs text-slate-500">{s.source}</span>}
+                              {s.published_at && (
+                                <span className="text-xs text-slate-600">
+                                  {new Date(s.published_at).toLocaleDateString(undefined, {
+                                    month: 'short', day: 'numeric', year: 'numeric',
+                                  })}
+                                </span>
+                              )}
+                            </div>
+                            {fc?.text && (
+                              <div className="mt-2 px-3 py-2 bg-[#0b0e14] border border-sky-500/20 rounded-lg text-xs">
+                                <SummaryMarkdown content={fc.text} />
+                              </div>
+                            )}
+                            {fc?.error && (
+                              <div className="mt-2 text-xs text-red-400">{fc.error}</div>
+                            )}
+                          </div>
+                          {s.id != null && (
+                            <button
+                              onClick={() => openArticleView(s.id!)}
+                              title="Open in app"
+                              className="flex items-center justify-center p-1.5 rounded-lg text-slate-400 border border-[#1e2433]
+                                         hover:bg-white/10 hover:text-white transition-colors shrink-0"
+                            >
+                              <FileText size={12} />
+                            </button>
+                          )}
+                          {s.url && s.url.startsWith('http') && (
+                            <a
+                              href={s.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Open original source"
+                              className="flex items-center justify-center p-1.5 rounded-lg text-slate-400 border border-[#1e2433]
+                                         hover:bg-white/10 hover:text-white transition-colors shrink-0"
+                            >
+                              <ExternalLink size={12} />
+                            </a>
+                          )}
+                          {s.id != null && (
+                            <button
+                              onClick={() => runFactCheck(s.id!)}
+                              disabled={fc?.loading}
+                              title="Fact-check this article's claims against live web sources"
+                              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-sky-400 border border-sky-500/20
+                                         hover:bg-sky-500/10 disabled:opacity-50 transition-colors shrink-0"
+                            >
+                              {fc?.loading ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
+                              Fact check
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -759,6 +939,85 @@ export default function SummaryPage() {
           themes={result.key_themes}
           onClose={() => setViewerOpen(false)}
         />
+      )}
+
+      {/* Local article viewer */}
+      {viewArticleOpen && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center overflow-y-auto p-4 md:p-8"
+          onClick={() => setViewArticleOpen(false)}
+        >
+          <div
+            className="bg-[#0d1117] border border-[#1e2433] shadow-2xl flex flex-col w-full max-w-2xl my-auto rounded-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#1e2433]">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText size={16} className="text-indigo-400 flex-shrink-0" />
+                <h2 className="text-sm font-bold text-white truncate">
+                  {viewArticle?.title || 'Article'}
+                </h2>
+              </div>
+              <button
+                onClick={() => setViewArticleOpen(false)}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors flex-shrink-0"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1 max-h-[70vh]">
+              {viewArticleLoading && (
+                <div className="flex items-center gap-2 text-xs text-slate-500 py-8 justify-center">
+                  <Loader2 size={14} className="animate-spin" /> Loading article…
+                </div>
+              )}
+              {viewArticleError && (
+                <div className="text-xs text-red-400 py-4 text-center">{viewArticleError}</div>
+              )}
+              {viewArticle && !viewArticleLoading && (
+                <>
+                  <div className="flex items-center gap-2 mb-3 text-xs text-slate-500">
+                    {viewArticle.source && <span>{viewArticle.source}</span>}
+                    {viewArticle.published_at && (
+                      <span className="flex items-center gap-1">
+                        <Clock size={11} />
+                        {new Date(viewArticle.published_at).toLocaleString(undefined, {
+                          month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                        })}
+                      </span>
+                    )}
+                    {viewArticle.category && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-[#161b22] border border-[#1e2433]">{viewArticle.category}</span>
+                    )}
+                  </div>
+                  {viewArticle.tags && viewArticle.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      {viewArticle.tags.map((t, i) => (
+                        <span key={i} className="flex items-center gap-1 px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded text-[10px] text-indigo-300">
+                          <Tag size={9} /> {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
+                    {viewArticle.content || viewArticle.summary || 'No content available.'}
+                  </div>
+                  {viewArticle.url && viewArticle.url.startsWith('http') && (
+                    <a
+                      href={viewArticle.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 mt-4 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                      <ExternalLink size={11} /> Open original source
+                    </a>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

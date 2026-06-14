@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..config import DEFAULT_STOCK_SYSTEM_PROMPT
 from ..models import Article, AppSettings, StockAnalysis
-from .ai_client import call_ai, call_ai_grounded, get_current_ai_settings
+from .ai_client import call_ai, call_ai_grounded, get_ai_settings_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +282,7 @@ Beta: {quote.get("beta", "N/A")}
 {web_block}
 """
 
+    ai_provider, ai_model = await get_ai_settings_for_task("stock", db)
     try:
         if include_web:
             system_grounded = (
@@ -289,7 +290,7 @@ Beta: {quote.get("beta", "N/A")}
                 + " ADDITIONALLY: use your built-in web search to ground the analysis in the "
                 "latest real-world developments, filings, analyst notes and price-moving news."
             )
-            grounded = await call_ai_grounded(system=system_grounded, user=user, max_tokens=2048, db=db)
+            grounded = await call_ai_grounded(system=system_grounded, user=user, max_tokens=2048, provider=ai_provider, model=ai_model, db=db)
             raw = grounded.text
             for c in (grounded.citations or []):
                 if c.url:
@@ -299,7 +300,7 @@ Beta: {quote.get("beta", "N/A")}
                 ticker, grounded.provider_used_grounding, len(grounded.citations or []),
             )
         else:
-            raw = await call_ai(system=system, user=user, max_tokens=2048, db=db)
+            raw = await call_ai(system=system, user=user, max_tokens=2048, provider=ai_provider, model=ai_model, db=db)
         import json, re
         cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
         start = cleaned.find("{")
@@ -311,7 +312,7 @@ Beta: {quote.get("beta", "N/A")}
         logger.error("Stock AI analysis failed for %s: %s", ticker, exc)
         ai_data = {}
 
-    _, model_name = await get_current_ai_settings(db)
+    model_name = ai_model
 
     # De-dupe references by URL, preserving order.
     seen_urls: set[str] = set()

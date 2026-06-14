@@ -1177,7 +1177,7 @@ function ArticleDetail({ article, onClose, onPrev, onNext, position }: {
   // Unified timeline of user prompts, AI chat replies, and persisted analyses,
   // sorted chronologically (oldest first → newest at the bottom, chat-style).
   const [timeline, setTimeline] = useState<TimelineItem[]>([])
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState('Summary')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [language, setLanguage] = useState<Lang>('English')
@@ -1264,7 +1264,7 @@ function ArticleDetail({ article, onClose, onPrev, onNext, position }: {
 
     try {
       if (mode === 'factcheck') {
-        const res = await analysisApi.factCheckArticle(article.id)
+        const res = await analysisApi.factCheckArticle(article.id, language)
         setTimeline(prev => prev
           .filter(it => it.id !== pendingId)
           .concat({ kind: 'assistant', id: `m-${Date.now()}`, at: Date.now(), content: res.response })

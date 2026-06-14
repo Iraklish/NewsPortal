@@ -32,6 +32,9 @@ export default function SettingsPage() {
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelsError, setModelsError] = useState('')
+  const [secAvailableModels, setSecAvailableModels] = useState<string[]>([])
+  const [secLoadingModels, setSecLoadingModels] = useState(false)
+  const [secModelsError, setSecModelsError] = useState('')
   const [nextFetchAt, setNextFetchAt] = useState<string | null>(null)
   const [editingNextRun, setEditingNextRun] = useState(false)
   const [nextRunInput, setNextRunInput] = useState('')
@@ -64,6 +67,9 @@ export default function SettingsPage() {
       setForm({
         default_ai_provider: s.default_ai_provider,
         default_ai_model: s.default_ai_model,
+        secondary_ai_provider: s.secondary_ai_provider,
+        secondary_ai_model: s.secondary_ai_model,
+        ai_task_assignments: { ...s.ai_task_assignments },
         chat_system_prompt: s.chat_system_prompt_customized ? s.chat_system_prompt : '',
         ask_system_prompt: s.ask_system_prompt_customized ? s.ask_system_prompt : '',
         directed_report_system_prompt: s.directed_report_system_prompt_customized ? s.directed_report_system_prompt : '',
@@ -74,6 +80,7 @@ export default function SettingsPage() {
         link_analysis_prompt: s.link_analysis_prompt_customized ? s.link_analysis_prompt : '',
         fetch_interval_minutes: s.fetch_interval_minutes,
         auto_tag_interval_minutes: s.auto_tag_interval_minutes,
+        chat_chunk_size: s.chat_chunk_size,
         entertainment_keywords: s.entertainment_keywords_customized ? s.entertainment_keywords : '',
       })
     }).catch((e: unknown) => {
@@ -189,6 +196,30 @@ export default function SettingsPage() {
     }
   }
 
+  async function fetchSecondaryModels() {
+    const provider = form.secondary_ai_provider || settings?.secondary_ai_provider
+    if (!provider) return
+    setSecLoadingModels(true)
+    setSecModelsError('')
+    setSecAvailableModels([])
+    try {
+      const res = await settingsApi.models(provider)
+      setSecAvailableModels(res.models)
+      if (res.models.length === 0) setSecModelsError('Provider returned no models')
+    } catch (e: unknown) {
+      setSecModelsError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSecLoadingModels(false)
+    }
+  }
+
+  function setTaskAssignment(task: string, value: string) {
+    setForm(prev => ({
+      ...prev,
+      ai_task_assignments: { ...(prev.ai_task_assignments || {}), [task]: value },
+    }))
+  }
+
   if (loading) return <div className="text-slate-500 text-sm p-4">Loading settings…</div>
   if (loadError) return (
     <div className="flex items-center gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm max-w-lg">
@@ -300,6 +331,88 @@ export default function SettingsPage() {
                   </select>
                 )}
               </Field>
+            </div>
+          </Card>
+
+          {/* Secondary AI Provider */}
+          <Card title="Secondary AI Provider">
+            <p className="text-xs text-slate-500 mb-4">
+              Optional. Configure a second AI provider/model, then assign individual tasks below to use it
+              instead of the default provider — e.g. route bulk summaries to a cheaper/faster model.
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Secondary Provider">
+                <select
+                  value={form.secondary_ai_provider || ''}
+                  onChange={e => {
+                    set('secondary_ai_provider', e.target.value)
+                    if (e.target.value && !form.secondary_ai_model) set('secondary_ai_model', DEFAULT_MODELS[e.target.value] || '')
+                  }}
+                  className="input"
+                >
+                  <option value="">— none —</option>
+                  {AI_PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Secondary Model">
+                <div className="flex gap-2">
+                  <input
+                    value={form.secondary_ai_model || ''}
+                    onChange={e => set('secondary_ai_model', e.target.value)}
+                    placeholder="e.g. gemini-2.5-flash"
+                    className="input"
+                    list="available-secondary-models-list"
+                    disabled={!form.secondary_ai_provider}
+                  />
+                  <datalist id="available-secondary-models-list">
+                    {secAvailableModels.map(m => <option key={m} value={m} />)}
+                  </datalist>
+                  <button
+                    type="button"
+                    onClick={fetchSecondaryModels}
+                    disabled={secLoadingModels || !form.secondary_ai_provider}
+                    title="Fetch available models from the provider"
+                    className="px-3 py-2 bg-[#1e2433] hover:bg-[#2d3148] disabled:opacity-50 rounded-lg text-xs text-slate-300 hover:text-white transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                  >
+                    {secLoadingModels ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    {secAvailableModels.length > 0 ? `${secAvailableModels.length} models` : 'Fetch'}
+                  </button>
+                </div>
+                {secModelsError && <p className="text-[10px] text-red-400 mt-1">{secModelsError}</p>}
+                {secAvailableModels.length > 0 && (
+                  <select
+                    value=""
+                    onChange={e => e.target.value && set('secondary_ai_model', e.target.value)}
+                    className="input mt-2 text-xs"
+                  >
+                    <option value="">— pick from list —</option>
+                    {secAvailableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                )}
+              </Field>
+            </div>
+          </Card>
+
+          {/* AI Task Routing */}
+          <Card title="AI Task Routing">
+            <p className="text-xs text-slate-500 mb-4">
+              Choose which provider handles each AI feature. &quot;Secondary&quot; falls back to the default
+              provider if no secondary provider is configured above.
+            </p>
+            <div className="space-y-2">
+              {Object.entries(settings?.ai_tasks || {}).map(([taskKey, label]) => (
+                <div key={taskKey} className="flex items-center justify-between gap-3 py-1">
+                  <span className="text-sm text-slate-300">{label}</span>
+                  <select
+                    value={form.ai_task_assignments?.[taskKey] || 'primary'}
+                    onChange={e => setTaskAssignment(taskKey, e.target.value)}
+                    className="input w-40"
+                  >
+                    <option value="primary">Default Provider</option>
+                    <option value="secondary">Secondary Provider</option>
+                  </select>
+                </div>
+              ))}
             </div>
           </Card>
 
@@ -607,6 +720,21 @@ export default function SettingsPage() {
                     }}
                     className="input w-32"
                   />
+                </Field>
+                <Field label="AI Chat batch size (articles per batch)">
+                  <input
+                    type="number"
+                    min={50}
+                    max={10000}
+                    step={50}
+                    value={form.chat_chunk_size ?? settings?.chat_chunk_size ?? 2000}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10)
+                      if (!isNaN(v)) set('chat_chunk_size', Math.max(50, Math.min(10000, v)))
+                    }}
+                    className="input w-32"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">Bulk &quot;analyze last N articles&quot; chats are processed in batches of this size (map-reduce).</p>
                 </Field>
                 {nextFetchAt && (
                   <div className="pb-1.5">

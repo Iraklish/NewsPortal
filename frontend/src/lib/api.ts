@@ -294,6 +294,10 @@ export interface KeyStatus {
 export interface AppSettingsOut {
   default_ai_provider: string
   default_ai_model: string
+  secondary_ai_provider: string
+  secondary_ai_model: string
+  ai_task_assignments: Record<string, string>
+  ai_tasks: Record<string, string>
   anthropic_api_key: KeyStatus
   openai_api_key: KeyStatus
   gemini_api_key: KeyStatus
@@ -338,6 +342,7 @@ export interface AppSettingsOut {
   auto_analyze_enabled: boolean
   fetch_interval_minutes: number
   auto_tag_interval_minutes: number
+  chat_chunk_size: number
   entertainment_keywords: string
   entertainment_keywords_default: string
   entertainment_keywords_customized: boolean
@@ -346,6 +351,9 @@ export interface AppSettingsOut {
 export interface SettingsUpdate {
   default_ai_provider?: string
   default_ai_model?: string
+  secondary_ai_provider?: string
+  secondary_ai_model?: string
+  ai_task_assignments?: Record<string, string>
   anthropic_api_key?: string
   openai_api_key?: string
   gemini_api_key?: string
@@ -374,6 +382,7 @@ export interface SettingsUpdate {
   auto_analyze_enabled?: boolean
   fetch_interval_minutes?: number
   auto_tag_interval_minutes?: number
+  chat_chunk_size?: number
   entertainment_keywords?: string
 }
 
@@ -388,6 +397,7 @@ export interface SummaryRequest {
 }
 
 export interface SummarySourceRef {
+  id?: number
   title?: string
   url: string
   source?: string
@@ -403,6 +413,62 @@ export interface SummaryResponse {
   sources: SummarySourceRef[]
   filter_type: string
   filter_value: string
+}
+
+export interface TimelineBucket {
+  start: string
+  count: number
+  tension: number
+  escalation: number
+  sentiment: number
+}
+
+export interface TimelineRow {
+  label: string
+  kind: 'country' | 'topic' | 'company'
+  total: number
+}
+
+export interface TimelineResponse {
+  total: number
+  buckets: TimelineBucket[]
+  rows: TimelineRow[]
+  matrix: number[][]
+  max_count: number
+  max_tension: number
+  max_cell: number
+  max_sentiment: number
+  top_terms: { term: string; count: number }[]
+  granularity: string
+  bucket_seconds: number
+  start: string | null
+  end: string | null
+  all_countries: string[]
+  all_topics: string[]
+  all_companies: string[]
+}
+
+export interface TimelineRequest {
+  filter_type?: 'tag' | 'category' | 'keyword'
+  filter_value?: string
+  time_window_hours?: number
+  max_articles?: number
+  granularity?: string   // auto|15min|30min|hour|3hour|6hour|day|week
+  country?: string | null
+  topic?: string | null
+  company?: string | null
+  q?: string | null
+}
+
+export interface TimelineArticle {
+  id: number
+  title: string | null
+  source: string | null
+  url: string | null
+  category: string | null
+  published_at: string | null
+  tension: number
+  terms: string[]
 }
 
 export interface MindMapNode {
@@ -642,10 +708,14 @@ export const analysisApi = {
     })
   },
 
-  factCheckArticle(articleId: number) {
+  factCheckArticle(articleId: number, language?: string) {
     return request<{ response: string; references: unknown[]; used_web: boolean }>(
       `/analysis/article/${articleId}/factcheck`,
-      { method: 'POST' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: language ?? '' }),
+      },
     )
   },
 
@@ -718,6 +788,32 @@ export const analysisApi = {
 
   summarizeAsk(req: { summary: string; question: string; history: Array<{ role: string; content: string }> }) {
     return request<{ response: string }>('/analysis/summary/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+  },
+
+  timeline(req: TimelineRequest) {
+    return request<TimelineResponse>('/analysis/summary/timeline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+  },
+
+  timelineArticles(req: {
+    filter_type?: 'tag' | 'category' | 'keyword'
+    filter_value?: string
+    start: string
+    end: string
+    country?: string | null
+    topic?: string | null
+    company?: string | null
+    q?: string | null
+    limit?: number
+  }) {
+    return request<{ articles: TimelineArticle[]; count: number }>('/analysis/summary/timeline/articles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),

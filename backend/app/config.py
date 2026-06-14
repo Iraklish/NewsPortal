@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     bing_search_api_key: str = ""
     default_ai_provider: str = "anthropic"
     default_ai_model: str = "claude-sonnet-4-6"
+    secondary_ai_provider: str = ""
+    secondary_ai_model: str = ""
 
     # News ingestion
     news_api_key: str = ""
@@ -26,6 +28,7 @@ class Settings(BaseSettings):
     max_auto_analyze_per_run: int = 25
     auto_analyze_enabled: bool = True
     auto_tag_interval_minutes: int = 10  # secondary scheduler: backfill tags for untagged articles
+    chat_chunk_size: int = 2000  # AI Chat bulk analysis: articles per map-reduce batch
 
     # AI prompt overrides (empty -> use hardcoded defaults)
     chat_system_prompt: str = ""
@@ -170,6 +173,22 @@ You **must strictly adhere** to the following format
   - [Detailed description of points discussed]
   - [Detailed description of points discussed]\
 """
+
+
+# AI tasks that can each be routed to either the primary or secondary AI provider.
+AI_TASKS: dict[str, str] = {
+    "chat": "AI Chat panel",
+    "ask": "Ask about an article / report / one-click summarize",
+    "summary": "Bulk summary (Summary page)",
+    "analyze": "Analyze article / directed reports",
+    "factcheck": "Fact-check (web-grounded)",
+    "stock": "Stock analysis",
+    "image_analysis": "Image / attachment analysis",
+    "link_analysis": "Linked-page analysis",
+    "tagging": "Auto-tagging",
+    "mindmap": "MindMap",
+    "search": "Web search (chat with web)",
+}
 
 
 settings = Settings()

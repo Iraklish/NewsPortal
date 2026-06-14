@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -29,7 +30,7 @@ from ..schemas import (
     ReportAskRequest,
 )
 from ..services.analyzer import analyze_article, run_directed_analysis
-from ..services.ai_client import call_ai, call_ai_grounded, call_ai_vision
+from ..services.ai_client import call_ai, call_ai_grounded, call_ai_vision, get_ai_settings_for_task
 from ..services.directed_report import count_db_articles, run_directed_report
 from ..services.search_service import fetch_url, multi_engine_search
 
@@ -38,6 +39,17 @@ def _get_prompt(db: Session, key: str, default: str) -> str:
     row = db.query(AppSettings).filter(AppSettings.key == key).first()
     if row and row.value and row.value.strip():
         return row.value
+    return default
+
+
+def _get_int_setting(db: Session, key: str, default: int) -> int:
+    """Read an integer app-setting (DB override → fallback default)."""
+    row = db.query(AppSettings).filter(AppSettings.key == key).first()
+    if row and row.value and str(row.value).strip():
+        try:
+            return int(str(row.value).strip())
+        except (ValueError, TypeError):
+            pass
     return default
 
 router = APIRouter()
@@ -212,7 +224,8 @@ async def ask_about_report(
         user_prompt = "Conversation so far:\n" + "\n".join(history_lines) + f"\n\nQuestion: {body.question}"
 
     try:
-        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("ask", db)
+        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Report ask failed for report %s: %s", report_id, exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -274,7 +287,7 @@ async def generate_summary(
                     ).bindparams(qtag=pat),
                 ))
 
-        limit_val = body.max_articles if body.max_articles > 0 else 5000
+        limit_val = body.max_articles if body.max_articles > 0 else _MAX_SUMMARY_ARTICLES
         articles = (
             query
             .order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
@@ -289,18 +302,6 @@ async def generate_summary(
                 f"No articles found in the last {body.time_window_hours}h"
             )
             raise HTTPException(status_code=404, detail=detail)
-
-    # Build per-article context blocks (capped at 500 chars each)
-    context_lines: list[str] = []
-    for i, a in enumerate(articles, 1):
-        published = a.published_at.isoformat() if a.published_at else "unknown"
-        excerpt = (a.summary or a.content or "")[:500]
-        context_lines.append(
-            f"[{i}] {a.title or '(no title)'}\n"
-            f"    Source: {a.source or 'unknown'} | Published: {published}\n"
-            f"    {excerpt}"
-        )
-    context_block = "\n\n".join(context_lines)
 
     # ── System prompt ─────────────────────────────────────────────────────────
     # Base: DB override → built-in default
@@ -341,32 +342,58 @@ async def generate_summary(
     else:
         header = f"Summarize the following {len(articles)} recent articles."
 
-    user = f"{header}\n\n{context_block}"
+    # When the selection/filter pulls in more articles than fit in a single AI
+    # call, fall back to map-reduce: digest each batch, then synthesize one
+    # summary from the digests (mirrors the AI Chat bulk-analysis path).
+    chunk_size = max(50, _get_int_setting(db, "chat_chunk_size", _CHAT_CHUNK_SIZE))
 
-    try:
-        raw = await call_ai(system=system, user=user, max_tokens=2000, db=db)
-    except Exception as exc:
-        logger.error("Summary AI call failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+    if len(articles) > chunk_size:
+        try:
+            final_text, _ = await _chained_analysis(header, articles, system, db, chunk_size=chunk_size, task="summary")
+        except Exception as exc:
+            logger.error("Chained summary AI call failed: %s", exc)
+            raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+        data = {"summary": final_text, "key_themes": [], "notable_sources": [], "time_span": ""}
+    else:
+        # Build per-article context blocks (capped at 500 chars each)
+        context_lines: list[str] = []
+        for i, a in enumerate(articles, 1):
+            published = a.published_at.isoformat() if a.published_at else "unknown"
+            excerpt = (a.summary or a.content or "")[:500]
+            context_lines.append(
+                f"[{i}] {a.title or '(no title)'}\n"
+                f"    Source: {a.source or 'unknown'} | Published: {published}\n"
+                f"    {excerpt}"
+            )
+        context_block = "\n\n".join(context_lines)
+        user = f"{header}\n\n{context_block}"
 
-    # Parse JSON response
-    cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
-    s_idx = cleaned.find("{"); e_idx = cleaned.rfind("}")
-    if s_idx != -1 and e_idx != -1:
-        cleaned = cleaned[s_idx:e_idx + 1]
-    try:
-        data = json.loads(cleaned)
-    except Exception:
-        data = {"summary": raw, "key_themes": [], "notable_sources": [], "time_span": ""}
+        try:
+            ai_provider, ai_model = await get_ai_settings_for_task("summary", db)
+            raw = await call_ai(system=system, user=user, max_tokens=4096, provider=ai_provider, model=ai_model, db=db)
+        except Exception as exc:
+            logger.error("Summary AI call failed: %s", exc)
+            raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+
+        # Parse JSON response
+        cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+        s_idx = cleaned.find("{"); e_idx = cleaned.rfind("}")
+        if s_idx != -1 and e_idx != -1:
+            cleaned = cleaned[s_idx:e_idx + 1]
+        try:
+            data = json.loads(cleaned)
+        except Exception:
+            data = {"summary": raw, "key_themes": [], "notable_sources": [], "time_span": ""}
 
     sources = [
         {
+            "id": a.id,
             "title": a.title,
             "url": a.url,
             "source": a.source,
             "published_at": a.published_at.isoformat() if a.published_at else None,
         }
-        for a in articles[:30]
+        for a in articles
     ]
 
     return {
@@ -410,12 +437,544 @@ async def ask_about_summary(
         user_prompt = "Conversation history:\n" + "\n".join(history_lines) + f"\n\nQuestion: {user_prompt}"
 
     try:
-        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("ask", db)
+        response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Summary ask AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
 
     return {"response": response_text}
+
+
+# ── Timeline / heatmap ────────────────────────────────────────────────────────
+
+class TimelineRequest(BaseModel):
+    filter_type: str = "keyword"          # "tag" | "category" | "keyword"
+    filter_value: str = ""
+    time_window_hours: int = 24           # 0 = all time (span derived from data)
+    max_articles: int = 0                 # 0 = no hard cap (bounded to 20000)
+    granularity: str = "auto"             # auto|15min|30min|hour|3hour|6hour|day|week
+    country: Optional[str] = None         # adjustable filter: restrict to a country
+    topic: Optional[str] = None           # adjustable filter: restrict to a topic
+    company: Optional[str] = None         # adjustable filter: restrict to a company
+    q: Optional[str] = None               # adjustable free-text filter
+
+
+# Weighted escalation/tension lexicon, matched against title + summary.
+# Whole-word entries require word boundaries; stem entries match as a prefix
+# (e.g. "escalat" → escalate/escalation/escalated).
+_ESC_EXACT: dict[str, int] = {
+    "war": 3, "missile": 3, "rocket": 3, "strike": 3, "attack": 3, "drone": 3,
+    "killed": 3, "dead": 3, "raid": 3, "siege": 3, "nuclear": 3, "offensive": 3,
+    "assault": 3, "explosion": 3, "bombing": 3, "ballistic": 3, "warhead": 3,
+    "incursion": 3, "ambush": 3,
+    "conflict": 2, "clash": 2, "tension": 2, "threat": 2, "sanction": 2, "troops": 2,
+    "warning": 2, "crisis": 2, "ceasefire": 2, "truce": 2, "blockade": 2, "standoff": 2,
+    "wounded": 2, "alert": 2, "gunfire": 2, "hostage": 2, "coup": 2,
+    "protest": 1, "unrest": 1, "dispute": 1, "talks": 1, "summit": 1, "embargo": 1,
+    "border": 1, "tariff": 1, "cyberattack": 1,
+}
+_ESC_STEM: dict[str, int] = {
+    "invasi": 3, "invade": 3, "airstrik": 3, "air strik": 3, "shell": 3, "bombard": 3,
+    "casualt": 3, "massacre": 3, "retaliat": 3, "escalat": 3,
+    "militar": 2, "mobiliz": 2, "deploy": 2, "hostil": 2, "provocation": 2, "evacuat": 2,
+    "negotiat": 1, "diplomat": 1,
+}
+_ESC_PATTERN = re.compile(
+    r"\b(?:"
+    + "|".join(
+        [re.escape(t) + r"\b" for t in sorted(_ESC_EXACT, key=len, reverse=True)]
+        + [re.escape(t) for t in sorted(_ESC_STEM, key=len, reverse=True)]
+    )
+    + ")",
+    re.IGNORECASE,
+)
+_ESC_HIGH = 5   # per-article score at/above which an article is a "severe" event
+
+
+def _weight_for(tok: str) -> tuple[int, str]:
+    t = tok.lower()
+    if t in _ESC_EXACT:
+        return _ESC_EXACT[t], t
+    for stem, w in _ESC_STEM.items():
+        if t.startswith(stem):
+            return w, stem
+    return 0, t
+
+
+def _tension_score(text: str) -> tuple[int, list[str]]:
+    """Return (capped weighted tension score, distinct matched terms)."""
+    if not text:
+        return 0, []
+    score = 0
+    matched: list[str] = []
+    seen: set[str] = set()
+    for m in _ESC_PATTERN.finditer(text):
+        w, key = _weight_for(m.group(0))
+        if not w:
+            continue
+        score += w
+        if key not in seen:
+            seen.add(key)
+            matched.append(key)
+    return min(score, 15), matched
+
+
+# ── Country & topic detection (heatmap rows) ──────────────────────────────────
+# Each entity maps to a list of lowercase match terms (stems allowed). Matched
+# against title + summary with a leading word boundary so "russia" is found in
+# "russian" but not in "prussia".
+_COUNTRY_TERMS: dict[str, list[str]] = {
+    "Israel": ["israel", "israeli", "idf", "jerusalem", "tel aviv", "netanyahu", "knesset"],
+    "Palestine": ["palestin", "gaza", "hamas", "west bank", "ramallah", "rafah"],
+    "Lebanon": ["lebanon", "lebanese", "beirut", "hezbollah", "hizbollah"],
+    "Iran": ["iran", "iranian", "tehran", "irgc", "ayatollah", "khamenei"],
+    "Syria": ["syria", "syrian", "damascus"],
+    "Yemen": ["yemen", "yemeni", "houthi"],
+    "Saudi Arabia": ["saudi", "riyadh"],
+    "Ukraine": ["ukrain", "kyiv", "kiev", "zelensky", "zelenskyy"],
+    "Russia": ["russia", "russian", "moscow", "kremlin", "putin"],
+    "United States": ["united states", "u.s.", "america", "american", "washington", "white house", "biden", "trump", "pentagon"],
+    "China": ["china", "chinese", "beijing", "xi jinping", "taiwan"],
+    "United Kingdom": ["britain", "british", "united kingdom", "u.k.", "london", "downing street"],
+    "Germany": ["german", "berlin", "scholz", "bundestag"],
+    "France": ["france", "french", "paris", "macron"],
+    "Turkey": ["turkey", "turkish", "ankara", "erdogan", "istanbul"],
+    "European Union": ["european union", "brussels", "european commission", "eurozone"],
+    "Poland": ["poland", "polish", "warsaw"],
+    "Georgia": ["georgia", "georgian", "tbilisi"],
+    "India": ["india", "indian", "new delhi", "modi"],
+    "North Korea": ["north korea", "pyongyang", "kim jong"],
+    "Japan": ["japan", "japanese", "tokyo"],
+    "Egypt": ["egypt", "egyptian", "cairo"],
+    "Italy": ["italy", "italian", "rome", "meloni"],
+    "Spain": ["spain", "spanish", "madrid"],
+}
+_TOPIC_TERMS: dict[str, list[str]] = {
+    "Military conflict": ["war", "missile", "rocket", "airstrike", "air strike", "shelling", "offensive",
+                          "troops", "military", "combat", "frontline", "invasion", "drone", "bombard", "artillery"],
+    "Diplomacy": ["talks", "negotiat", "summit", "ceasefire", "treaty", "diplomat", "accord", "peace deal"],
+    "Economy & markets": ["inflation", "gdp", "recession", "stock market", "stocks", "economy", "interest rate",
+                          "central bank", "unemployment", "bond yield"],
+    "Energy": ["oil", "natural gas", "pipeline", "opec", "energy", "electricity", "power grid", "fuel"],
+    "Elections & politics": ["election", "ballot", "parliament", "coalition", "referendum", "prime minister", "presidential"],
+    "Sanctions & trade": ["sanction", "tariff", "embargo", "trade deal", "export ban"],
+    "Protests & unrest": ["protest", "riot", "unrest", "demonstration", "uprising"],
+    "Security & terrorism": ["terror", "militant", "insurgent", "extremis", "hostage", "kidnap"],
+    "Technology & cyber": ["cyber", "hack", "semiconductor", "artificial intelligence", "data breach"],
+    "Migration": ["migrant", "refugee", "asylum"],
+    "Disasters & climate": ["earthquake", "flood", "wildfire", "hurricane", "climate", "drought"],
+    "Technology": ["smartphone", "software", "startup", "silicon valley", "app store", "microchip",
+                   "tech industry", "robotics", "quantum computing"],
+    "Healthcare": ["vaccine", "pandemic", "hospital", "outbreak", "who", "drug approval", "clinical trial"],
+    "Space": ["space launch", "satellite", "nasa", "spacex", "rocket launch", "orbit", "space station"],
+    "Transportation": ["airline", "airport", "aviation", "shipping", "railway", "flight delay", "supply chain"],
+}
+
+
+def _build_entity_pattern(term_map: dict[str, list[str]]) -> tuple[re.Pattern, dict[str, str]]:
+    lookup: dict[str, str] = {}
+    for label, terms in term_map.items():
+        for t in terms:
+            lookup[t.lower()] = label
+    alts = sorted((re.escape(t) for t in lookup), key=len, reverse=True)
+    pattern = re.compile(r"\b(?:" + "|".join(alts) + ")", re.IGNORECASE)
+    return pattern, lookup
+
+
+# Major companies frequently referenced in geopolitical/economic news.
+_COMPANY_TERMS: dict[str, list[str]] = {
+    "Apple": ["apple inc", "iphone", "ipad", "macbook", "tim cook", "app store"],
+    "Google / Alphabet": ["google", "alphabet inc", "youtube", "android"],
+    "Microsoft": ["microsoft", "azure", "satya nadella", "xbox"],
+    "Amazon": ["amazon.com", "amazon web services", "aws", "jeff bezos"],
+    "Meta": ["meta platforms", "facebook", "instagram", "zuckerberg", "whatsapp"],
+    "Tesla": ["tesla", "elon musk"],
+    "Nvidia": ["nvidia", "jensen huang"],
+    "OpenAI": ["openai", "chatgpt", "sam altman"],
+    "SpaceX": ["spacex", "starship", "starlink"],
+    "Boeing": ["boeing"],
+    "Lockheed Martin": ["lockheed martin", "lockheed"],
+    "ExxonMobil": ["exxon", "exxonmobil"],
+    "Shell": ["shell plc", "royal dutch shell"],
+    "Saudi Aramco": ["aramco", "saudi aramco"],
+    "Gazprom": ["gazprom"],
+    "JPMorgan": ["jpmorgan", "jp morgan", "jamie dimon"],
+    "Goldman Sachs": ["goldman sachs"],
+    "BlackRock": ["blackrock"],
+    "Samsung": ["samsung"],
+    "Huawei": ["huawei"],
+    "ByteDance / TikTok": ["bytedance", "tiktok"],
+    "Pfizer": ["pfizer"],
+}
+
+
+_COUNTRY_PATTERN, _COUNTRY_LOOKUP = _build_entity_pattern(_COUNTRY_TERMS)
+_TOPIC_PATTERN, _TOPIC_LOOKUP = _build_entity_pattern(_TOPIC_TERMS)
+_COMPANY_PATTERN, _COMPANY_LOOKUP = _build_entity_pattern(_COMPANY_TERMS)
+
+
+def _detect_entities(text: str) -> tuple[set[str], set[str], set[str]]:
+    """Return (countries, topics, companies) mentioned in the text."""
+    if not text:
+        return set(), set(), set()
+    countries = {_COUNTRY_LOOKUP[m.group(0).lower()] for m in _COUNTRY_PATTERN.finditer(text)
+                 if m.group(0).lower() in _COUNTRY_LOOKUP}
+    topics = {_TOPIC_LOOKUP[m.group(0).lower()] for m in _TOPIC_PATTERN.finditer(text)
+              if m.group(0).lower() in _TOPIC_LOOKUP}
+    companies = {_COMPANY_LOOKUP[m.group(0).lower()] for m in _COMPANY_PATTERN.finditer(text)
+                 if m.group(0).lower() in _COMPANY_LOOKUP}
+    return countries, topics, companies
+
+
+def _entity_terms(kind: str, label: str) -> list[str]:
+    src = _COUNTRY_TERMS if kind == "country" else _COMPANY_TERMS if kind == "company" else _TOPIC_TERMS
+    return src.get(label, [])
+
+
+def _iso_utc(dt: datetime) -> str:
+    """Serialize a naive-UTC datetime as an explicit UTC ISO string (…+00:00).
+
+    The DB stores naive UTC; without a timezone marker the browser parses the
+    string as *local* time, which shifts drill-down ranges and breaks them.
+    """
+    return dt.replace(tzinfo=timezone.utc).isoformat()
+
+
+def _apply_adjustable_filters(query, country: str | None, topic: str | None, q: str | None, company: str | None = None):
+    """AND the timeline's adjustable Country / Topic / Company / Free-text filters onto a query."""
+    for kind, label in (("country", country), ("topic", topic), ("company", company)):
+        if label:
+            terms = _entity_terms(kind, label)
+            if terms:
+                conds = []
+                for t in terms:
+                    p = f"%{t}%"
+                    conds += [Article.title.ilike(p), Article.summary.ilike(p)]
+                query = query.filter(or_(*conds))
+    if q and q.strip():
+        qp = f"%{q.strip()}%"
+        query = query.filter(or_(
+            Article.title.ilike(qp), Article.summary.ilike(qp), Article.content.ilike(qp),
+        ))
+    return query
+
+
+# ── Sentiment lexicon (heatmap "Sentiment" strip) ──────────────────────────────
+# Independent of the tension/escalation lexicon above: positive vs. negative
+# framing words, each with a weight. Net per-article score = pos - neg.
+_SENT_POS_EXACT: dict[str, int] = {
+    "peace": 2, "ceasefire": 2, "truce": 2, "breakthrough": 2, "agreement": 1,
+    "deal": 1, "accord": 1, "cooperation": 1, "growth": 1, "recovery": 1,
+    "rally": 1, "surge": 1, "boost": 1, "rebound": 1, "approve": 1, "approved": 1,
+    "success": 1, "victory": 1, "relief": 1, "progress": 1, "stability": 1,
+    "improve": 1, "gains": 1, "rescue": 1, "win": 1, "milestone": 1,
+}
+_SENT_POS_STEM: dict[str, int] = {
+    "celebrat": 1, "optimis": 1, "stabiliz": 1, "thrive": 1, "recover": 1,
+}
+_SENT_NEG_EXACT: dict[str, int] = {
+    "war": 2, "attack": 2, "crisis": 2, "collapse": 2, "death": 2, "dead": 2,
+    "killed": 2, "conflict": 1, "threat": 1, "sanction": 1, "recession": 2,
+    "crash": 2, "loss": 1, "fear": 1, "unrest": 1, "violence": 2, "fail": 1,
+    "failed": 1, "warning": 1, "concern": 1, "decline": 1, "drop": 1, "plunge": 2,
+    "tension": 1, "missile": 1, "strike": 1, "explosion": 2, "bombing": 2,
+}
+_SENT_NEG_STEM: dict[str, int] = {
+    "casualt": 2, "invasi": 2, "escalat": 1, "protest": 1,
+}
+
+
+def _build_lexicon_pattern(exact: dict[str, int], stem: dict[str, int]) -> re.Pattern:
+    alts = (
+        [re.escape(t) + r"\b" for t in sorted(exact, key=len, reverse=True)]
+        + [re.escape(t) for t in sorted(stem, key=len, reverse=True)]
+    )
+    return re.compile(r"\b(?:" + "|".join(alts) + ")", re.IGNORECASE)
+
+
+_SENT_POS_PATTERN = _build_lexicon_pattern(_SENT_POS_EXACT, _SENT_POS_STEM)
+_SENT_NEG_PATTERN = _build_lexicon_pattern(_SENT_NEG_EXACT, _SENT_NEG_STEM)
+
+
+def _lexicon_score(text: str, exact: dict[str, int], stem: dict[str, int], pattern: re.Pattern) -> int:
+    if not text:
+        return 0
+    score = 0
+    for m in pattern.finditer(text):
+        t = m.group(0).lower()
+        if t in exact:
+            score += exact[t]
+            continue
+        for s, w in stem.items():
+            if t.startswith(s):
+                score += w
+                break
+    return score
+
+
+def _sentiment_score(text: str) -> int:
+    """Net per-article sentiment: positive lexicon score minus negative, capped to ±10."""
+    pos = _lexicon_score(text, _SENT_POS_EXACT, _SENT_POS_STEM, _SENT_POS_PATTERN)
+    neg = _lexicon_score(text, _SENT_NEG_EXACT, _SENT_NEG_STEM, _SENT_NEG_PATTERN)
+    return max(-10, min(10, pos - neg))
+
+
+_GRAN_SECONDS: dict[str, int] = {
+    "1min": 60, "5min": 300, "10min": 600, "15min": 900, "30min": 1800,
+    "45min": 2700, "hour": 3600, "3hour": 10800, "6hour": 21600,
+    "day": 86400, "week": 604800,
+}
+_SNAP_STEPS = [900, 1800, 3600, 10800, 21600, 43200, 86400, 604800]
+_MAX_BUCKETS = 120
+_MAX_COUNTRY_ROWS = 14
+_MAX_TOPIC_ROWS = 15
+_MAX_COMPANY_ROWS = 10
+
+
+def _resolve_bucket_seconds(granularity: str, span_seconds: float) -> int:
+    if granularity in _GRAN_SECONDS:
+        return _GRAN_SECONDS[granularity]
+    # auto: aim for ~40 buckets, snapped to a sensible step, then bound the count.
+    target = max(900.0, span_seconds / 40.0)
+    bucket = next((s for s in _SNAP_STEPS if s >= target), _SNAP_STEPS[-1])
+    while span_seconds / bucket > _MAX_BUCKETS:
+        idx = _SNAP_STEPS.index(bucket)
+        if idx >= len(_SNAP_STEPS) - 1:
+            break
+        bucket = _SNAP_STEPS[idx + 1]
+    return bucket
+
+
+@router.post("/summary/timeline")
+def summary_timeline(body: TimelineRequest, db: Session = Depends(get_db)):
+    """Bucketed activity timeline + per-category heatmap with a tension/escalation
+    signal, computed over the same article set the summary uses."""
+    if body.filter_type not in ("tag", "category", "keyword"):
+        raise HTTPException(status_code=400, detail="filter_type must be tag, category, or keyword")
+
+    fv = (body.filter_value or "").strip()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    query = db.query(
+        Article.published_at, Article.fetched_at, Article.category,
+        Article.title, Article.summary,
+    )
+    if body.time_window_hours and body.time_window_hours > 0:
+        cutoff = now - timedelta(hours=body.time_window_hours)
+        query = query.filter(or_(
+            and_(Article.published_at.isnot(None), Article.published_at >= cutoff),
+            and_(Article.published_at.is_(None), Article.fetched_at >= cutoff),
+        ))
+
+    if fv:
+        if body.filter_type == "tag":
+            query = query.filter(sa_text(
+                "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) = lower(:tv))"
+            ).bindparams(tv=fv))
+        elif body.filter_type == "category":
+            query = query.filter(Article.category == fv)
+        else:
+            pat = f"%{fv}%"
+            query = query.filter(or_(
+                Article.title.ilike(pat),
+                Article.summary.ilike(pat),
+                Article.content.ilike(pat),
+                sa_text(
+                    "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) LIKE lower(:qtag))"
+                ).bindparams(qtag=pat),
+            ))
+
+    # Adjustable graph filters (Country / Topic / Company / Free text).
+    query = _apply_adjustable_filters(query, body.country, body.topic, body.q, body.company)
+
+    cap = body.max_articles if body.max_articles and body.max_articles > 0 else 20000
+    rows = (
+        query.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
+        .limit(cap).all()
+    )
+
+    # Normalize to (timestamp, text) keeping only rows with a usable time.
+    items: list[tuple[datetime, str]] = []
+    for pub, fetched, cat, title, summary in rows:
+        ts = pub or fetched
+        if not ts:
+            continue
+        items.append((ts, f"{title or ''} {summary or ''}"))
+
+    if not items:
+        return {
+            "total": 0, "buckets": [], "rows": [], "matrix": [],
+            "max_count": 0, "max_tension": 0, "max_cell": 0, "max_sentiment": 0, "top_terms": [],
+            "granularity": body.granularity, "bucket_seconds": 0,
+            "start": None, "end": None,
+            "all_countries": list(_COUNTRY_TERMS), "all_topics": list(_TOPIC_TERMS),
+            "all_companies": list(_COMPANY_TERMS),
+        }
+
+    times = [t for t, _ in items]
+    win_start = (now - timedelta(hours=body.time_window_hours)) if body.time_window_hours and body.time_window_hours > 0 else min(times)
+    end = now
+    span = max(1.0, (end - win_start).total_seconds())
+    bucket_seconds = _resolve_bucket_seconds(body.granularity, span)
+    # If the requested resolution would exceed the bucket budget (e.g. 1m over a
+    # 24h window), anchor the buckets to the most recent end of the window so the
+    # view stays at full resolution instead of clamping old items into one bar.
+    n_raw = int(span // bucket_seconds) + 1
+    if n_raw > _MAX_BUCKETS:
+        n_buckets = _MAX_BUCKETS
+        start = end - timedelta(seconds=bucket_seconds * n_buckets)
+    else:
+        n_buckets = max(1, n_raw)
+        start = win_start
+
+    def bucket_index(ts: datetime) -> int:
+        idx = int((ts - start).total_seconds() // bucket_seconds)
+        return max(0, min(n_buckets - 1, idx))
+
+    counts = [0] * n_buckets
+    tension = [0] * n_buckets
+    escalation = [0] * n_buckets
+    sentiment = [0] * n_buckets
+    term_counter: dict[str, int] = {}
+    # Heatmap rows are detected entities — countries and topics, not feed categories.
+    ent_totals: dict[tuple[str, str], int] = {}          # (kind, label) -> total mentions
+    ent_bucket: dict[tuple[str, str], list[int]] = {}    # (kind, label) -> per-bucket counts
+
+    visible = 0
+    for ts, text in items:
+        if ts < start:
+            continue  # older than the anchored view — not shown
+        visible += 1
+        bi = bucket_index(ts)
+        counts[bi] += 1
+        score, matched = _tension_score(text)
+        tension[bi] += score
+        if score >= _ESC_HIGH:
+            escalation[bi] += 1
+        sentiment[bi] += _sentiment_score(text)
+        for m in matched:
+            term_counter[m] = term_counter.get(m, 0) + 1
+        countries, topics, companies = _detect_entities(text)
+        for kind, labels in (("country", countries), ("topic", topics), ("company", companies)):
+            for label in labels:
+                key = (kind, label)
+                ent_totals[key] = ent_totals.get(key, 0) + 1
+                ent_bucket.setdefault(key, [0] * n_buckets)[bi] += 1
+
+    # Pick the most-mentioned countries, topics, and companies as heatmap rows.
+    ranked = sorted(ent_totals, key=lambda k: ent_totals[k], reverse=True)
+    top_countries = [k for k in ranked if k[0] == "country"][:_MAX_COUNTRY_ROWS]
+    top_topics = [k for k in ranked if k[0] == "topic"][:_MAX_TOPIC_ROWS]
+    top_companies = [k for k in ranked if k[0] == "company"][:_MAX_COMPANY_ROWS]
+    chosen = top_countries + top_topics + top_companies
+    rows_out = [{"label": label, "kind": kind, "total": ent_totals[(kind, label)]} for (kind, label) in chosen]
+    matrix = [ent_bucket[k] for k in chosen]
+
+    buckets = []
+    for i in range(n_buckets):
+        b_start = start + timedelta(seconds=bucket_seconds * i)
+        buckets.append({
+            "start": _iso_utc(b_start),
+            "count": counts[i],
+            "tension": tension[i],
+            "escalation": escalation[i],
+            "sentiment": sentiment[i],
+        })
+
+    top_terms = sorted(term_counter.items(), key=lambda kv: kv[1], reverse=True)[:12]
+
+    return {
+        "total": visible,
+        "buckets": buckets,
+        "rows": rows_out,
+        "matrix": matrix,
+        "max_count": max(counts) if counts else 0,
+        "max_tension": max(tension) if tension else 0,
+        "max_cell": max((max(r) for r in matrix), default=0),
+        "max_sentiment": max((abs(s) for s in sentiment), default=0),
+        "top_terms": [{"term": t, "count": c} for t, c in top_terms],
+        "granularity": body.granularity,
+        "bucket_seconds": bucket_seconds,
+        "start": _iso_utc(start),
+        "end": _iso_utc(end),
+        "all_countries": list(_COUNTRY_TERMS),
+        "all_topics": list(_TOPIC_TERMS),
+        "all_companies": list(_COMPANY_TERMS),
+    }
+
+
+class TimelineArticlesRequest(BaseModel):
+    filter_type: str = "keyword"
+    filter_value: str = ""
+    start: str                       # ISO timestamp (inclusive)
+    end: str                         # ISO timestamp (exclusive)
+    country: Optional[str] = None    # restrict to a country
+    topic: Optional[str] = None      # restrict to a topic
+    company: Optional[str] = None    # restrict to a company
+    q: Optional[str] = None          # free-text restriction
+    limit: int = 100
+
+
+@router.post("/summary/timeline/articles")
+def summary_timeline_articles(body: TimelineArticlesRequest, db: Session = Depends(get_db)):
+    """Drill-down: list the articles behind a timeline bucket / heatmap cell."""
+    if body.filter_type not in ("tag", "category", "keyword"):
+        raise HTTPException(status_code=400, detail="filter_type must be tag, category, or keyword")
+    try:
+        start = datetime.fromisoformat(body.start).replace(tzinfo=None)
+        end = datetime.fromisoformat(body.end).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="invalid start/end timestamp")
+
+    query = db.query(Article).filter(or_(
+        and_(Article.published_at.isnot(None), Article.published_at >= start, Article.published_at < end),
+        and_(Article.published_at.is_(None), Article.fetched_at >= start, Article.fetched_at < end),
+    ))
+
+    # Country / Topic / Company / Free-text restrictions from the graph + clicked cell.
+    query = _apply_adjustable_filters(query, body.country, body.topic, body.q, body.company)
+
+    fv = (body.filter_value or "").strip()
+    if fv:
+        if body.filter_type == "tag":
+            query = query.filter(sa_text(
+                "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) = lower(:tv))"
+            ).bindparams(tv=fv))
+        elif body.filter_type == "category":
+            query = query.filter(Article.category == fv)
+        else:
+            pat = f"%{fv}%"
+            query = query.filter(or_(
+                Article.title.ilike(pat),
+                Article.summary.ilike(pat),
+                Article.content.ilike(pat),
+                sa_text(
+                    "EXISTS (SELECT 1 FROM json_each(articles.tags) WHERE lower(value) LIKE lower(:qtag))"
+                ).bindparams(qtag=pat),
+            ))
+
+    limit = max(1, min(500, body.limit))
+    rows = (
+        query.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
+        .limit(limit).all()
+    )
+
+    out = []
+    for a in rows:
+        score, terms = _tension_score(f"{a.title or ''} {a.summary or ''}")
+        ts = a.published_at or a.fetched_at
+        out.append({
+            "id": a.id,
+            "title": a.title,
+            "source": a.source,
+            "url": a.url,
+            "category": a.category,
+            "published_at": _iso_utc(ts) if ts else None,
+            "tension": score,
+            "terms": terms[:5],
+        })
+    return {"articles": out, "count": len(out)}
 
 
 @router.get("/{analysis_id}", response_model=AnalysisOut)
@@ -589,20 +1148,21 @@ async def ask_about_article(
     image_bytes, mime = (None, "image/jpeg")
     if (article.image_url or "").strip():
         try:
-            image_bytes, mime = await _load_image(article.image_url)
+            image_bytes, mime = await _load_image(article.image_url, referer=article.url)
         except Exception:
             image_bytes = None
 
     try:
+        ai_provider, ai_model = await get_ai_settings_for_task("ask", db)
         if image_bytes:
             vision_system = system + "\n\nAN IMAGE FROM THE POST IS ATTACHED. Use it to answer questions about the picture."
             try:
-                response_text = await call_ai_vision(system=vision_system, user=user_prompt, image_bytes=image_bytes, mime=mime, max_tokens=1200, db=db)
+                response_text = await call_ai_vision(system=vision_system, user=user_prompt, image_bytes=image_bytes, mime=mime, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
             except Exception as vexc:
                 logger.warning("Ask-article vision call failed, falling back to text: %s", vexc)
-                response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+                response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
         else:
-            response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, db=db)
+            response_text = await call_ai(system=system, user=user_prompt, max_tokens=1200, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Ask-article AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -633,9 +1193,26 @@ def _build_factcheck_web_block(web_results: list[dict]) -> tuple[str, list[dict]
     return "\n".join(blocks), refs
 
 
+class FactCheckRequest(BaseModel):
+    language: str = ""   # "" / "English" → English; other values → that language
+
+
+# Force the response language (the article may be in any language; without this
+# the model just mirrors the source language and ignores the user's choice).
+_FACTCHECK_LANG: dict[str, str] = {
+    "Hebrew":   "Respond entirely in Hebrew (עברית).",
+    "Russian":  "Respond entirely in Russian (Русский).",
+    "Georgian": "Respond entirely in Georgian (ქართული).",
+    "French":   "Respond entirely in French (Français).",
+    "German":   "Respond entirely in German (Deutsch).",
+    "English":  "Respond entirely in English, regardless of the article's language.",
+}
+
+
 @router.post("/article/{article_id}/factcheck")
 async def factcheck_article(
     article_id: int,
+    body: Optional[FactCheckRequest] = None,
     db: Session = Depends(get_db),
 ):
     """Fact-check an article's main claims against live web sources.
@@ -681,10 +1258,17 @@ async def factcheck_article(
         "- End with a one-line **Overall:** assessment of the article's reliability.\n"
         "- Be concrete and skeptical. Do not invent corroboration that the sources don't provide."
     )
+
+    # Pin the output language to the user's selection (default English).
+    lang = ((body.language if body else "") or "").strip() or "English"
+    lang_instr = _FACTCHECK_LANG.get(lang, f"Respond entirely in {lang}.")
+    system += f"\n\nIMPORTANT: {lang_instr}"
+
     user_prompt = "Fact-check the article above and report your findings."
 
     try:
-        grounded = await call_ai_grounded(system=system, user=user_prompt, max_tokens=2000, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("factcheck", db)
+        grounded = await call_ai_grounded(system=system, user=user_prompt, max_tokens=2000, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Fact-check AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -743,7 +1327,7 @@ def _media_path_for(image_url: str):
     return None
 
 
-async def _load_image(image_url: str) -> tuple[bytes | None, str]:
+async def _load_image(image_url: str, referer: str | None = None) -> tuple[bytes | None, str]:
     """Load image bytes + mime from a local /media path or a remote http(s) URL."""
     import mimetypes
     image_url = (image_url or "").strip()
@@ -759,10 +1343,20 @@ async def _load_image(image_url: str) -> tuple[bytes | None, str]:
         except Exception:
             return None, mime
 
-    # Remote image (e.g. RSS article image).
+    # Remote image (e.g. RSS article image). Many sites hotlink-protect images
+    # and 403 requests without a browser-like User-Agent / Referer, even though
+    # the browser loads the same URL fine in an <img> tag.
     if image_url.startswith(("http://", "https://")):
         import httpx
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; NewsPortal/1.0)"}
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        }
+        if referer:
+            headers["Referer"] = referer
         try:
             async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
                 r = await client.get(image_url, headers=headers)
@@ -772,7 +1366,8 @@ async def _load_image(image_url: str) -> tuple[bytes | None, str]:
                 data = r.content
                 if data and len(data) <= 15 * 1024 * 1024:
                     return data, mime
-        except Exception:
+        except Exception as exc:
+            logger.warning("[analyze-attachment] failed to fetch image %s: %s", image_url, exc)
             return None, "image/jpeg"
     return None, "image/jpeg"
 
@@ -797,7 +1392,8 @@ async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db
         ctx = (article.content or article.title or "").strip()[:1500]
         user = f"Post text for context:\n{ctx}\n\nAnalyze the attached image."
         try:
-            text = await call_ai_vision(system=system, user=user, image_bytes=image_bytes, mime=mime, db=db)
+            ai_provider, ai_model = await get_ai_settings_for_task("image_analysis", db)
+            text = await call_ai_vision(system=system, user=user, image_bytes=image_bytes, mime=mime, provider=ai_provider, model=ai_model, db=db)
         except Exception as exc:
             logger.error("Attachment image analysis failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"Image analysis failed: {exc}")
@@ -824,7 +1420,8 @@ async def analyze_attachment(article_id: int, body: AnalyzeAttachmentRequest, db
             f"Linked article content:\n{content}"
         )
         try:
-            text = await call_ai(system=system, user=user, max_tokens=1500, db=db)
+            ai_provider, ai_model = await get_ai_settings_for_task("link_analysis", db)
+            text = await call_ai(system=system, user=user, max_tokens=1500, provider=ai_provider, model=ai_model, db=db)
         except Exception as exc:
             logger.error("Attachment link analysis failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"Link analysis failed: {exc}")
@@ -837,73 +1434,246 @@ _NEED_WEB_MARKER = "[NEED_WEB]"
 _SUGGEST_MARKER = "SUGGEST_SEARCH:"
 
 
-def _gather_chat_articles(message: str, db: Session, limit: int = 25) -> list[Article]:
-    """Find articles relevant to the user's message via keyword scan.
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_MONTH_WORDS = {
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+}
 
-    Falls back to the latest articles when no useful keywords are present, so
-    the chat never starts cold.
+
+def _parse_date_range(message: str, now: datetime) -> Optional[tuple[datetime, datetime, str]]:
+    """Detect a single calendar day referenced in *message*.
+
+    Returns (start, end_exclusive, label) as naive-UTC day bounds, or None.
+    Handles today/yesterday, ISO yyyy-mm-dd, and "month day" / "day [of] month"
+    with an optional year (defaulting to the most recent past occurrence).
     """
+    import calendar
+    m = message.lower()
+
+    def day(y: int, mo: int, da: int) -> Optional[tuple[datetime, datetime, str]]:
+        try:
+            s = datetime(y, mo, da)
+        except ValueError:
+            return None
+        return s, s + timedelta(days=1), f"on {calendar.month_name[mo]} {da}, {y}"
+
+    # Relative ranges: "past/last N day(s)/week(s)/month(s)" and the unnumbered
+    # "this/past/last week/month" (treated as 7 / 30 days respectively).
+    rel = re.search(r"\b(?:past|last)\s+(\d{1,3})\s*(day|week|month)s?\b", m)
+    if rel:
+        n = int(rel.group(1))
+        unit = rel.group(2)
+        days = n * (7 if unit == "week" else 30 if unit == "month" else 1)
+        start = now - timedelta(days=days)
+        return start, now + timedelta(seconds=1), f"in the past {n} {unit}{'s' if n != 1 else ''}"
+    rel = re.search(r"\b(?:this|past|last)\s+(week|month)\b", m)
+    if rel:
+        unit = rel.group(1)
+        days = 7 if unit == "week" else 30
+        start = now - timedelta(days=days)
+        return start, now + timedelta(seconds=1), f"in the past {unit}"
+
+    if re.search(r"\btoday\b", m):
+        s = datetime(now.year, now.month, now.day)
+        return s, s + timedelta(days=1), "on today"
+    if re.search(r"\byesterday\b", m):
+        d = now - timedelta(days=1)
+        s = datetime(d.year, d.month, d.day)
+        return s, s + timedelta(days=1), "on yesterday"
+
+    iso = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", m)
+    if iso:
+        return day(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
+
+    mon = "|".join(_MONTHS)
+    # "june 7", "jun 7th 2026" — (?!\d) stops the day grabbing digits of a year
+    # (e.g. "june 2025" must not parse as day=20).
+    p = re.search(rf"\b({mon})[a-z]*\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?(?!\d)(?:[,\s]+(\d{{4}}))?", m)
+    if p:
+        mo, da, yr = _MONTHS[p.group(1)], int(p.group(2)), p.group(3)
+    else:
+        # "7 june", "07 of june", "7th of jun 2026"
+        p = re.search(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({mon})[a-z]*\.?(?:[,\s]+(\d{{4}}))?", m)
+        if not p:
+            return None
+        da, mo, yr = int(p.group(1)), _MONTHS[p.group(2)], p.group(3)
+
+    if yr:
+        year = int(yr)
+    else:
+        # No explicit year → assume the most recent past occurrence.
+        year = now.year
+        if (mo, da) > (now.month, now.day):
+            year -= 1
+    return day(year, mo, da)
+
+
+_MAX_CHAT_ARTICLES = 2000   # hard ceiling on how many we feed the model at once
+
+
+def _parse_requested_count(message: str) -> Optional[int]:
+    """Detect an explicit article count, e.g. "analyze last 10000 articles"."""
+    m = message.lower()
+    for pat in (
+        r"(?:last|latest|top|recent|analy[sz]e|summari[sz]e|past)\s+(\d{1,7})",
+        r"(\d{1,7})\s+(?:articles|posts|items|stories|news\b)",
+    ):
+        mt = re.search(pat, m)
+        if mt:
+            try:
+                n = int(mt.group(1))
+                if n >= 1:
+                    return n
+            except ValueError:
+                pass
+    return None
+
+
+def _gather_chat_articles(message: str, db: Session, limit: int = 50) -> tuple[list[Article], str]:
+    """Search the whole article DB for the user's message.
+
+    Supports date references ("articles from June 7") and keywords, combined.
+    Returns (articles, scope_note) where scope_note describes how many matched
+    so the model never claims it "only has N articles" when more exist.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    date_range = _parse_date_range(message, now)
+
     raw_terms = re.findall(r"[A-Za-zÀ-ɏЀ-ӿ֐-׿]{3,}", message)
     stopwords = {
         "the", "and", "for", "with", "that", "this", "from", "have", "what", "who", "why",
-        "how", "are", "was", "were", "will", "did", "did", "you", "your", "tell", "about",
-        "today", "yesterday", "any", "news", "news?", "latest", "give", "show", "summary",
+        "how", "are", "was", "were", "will", "did", "you", "your", "tell", "about",
+        "today", "yesterday", "any", "news", "latest", "give", "show", "summary",
+        "find", "article", "articles", "published", "date", "dated", "search", "results",
+        "last", "analyze", "analyse", "summarize", "summarise", "past", "recent", "top",
+        "review", "days", "according", "them", "into", "account", "take", "taking",
+        "week", "weeks", "month", "months", "year", "years", "can", "could", "would",
+        "should", "may", "might", "them",
     }
-    keywords = [kw.lower() for kw in raw_terms if kw.lower() not in stopwords]
-    # Dedupe while preserving order
+    keywords = [kw.lower() for kw in raw_terms
+                if kw.lower() not in stopwords and kw.lower() not in _MONTH_WORDS]
     seen: set[str] = set()
     keywords = [kw for kw in keywords if not (kw in seen or seen.add(kw))][:8]
 
+    # Proper nouns from the original (cased) message — a strong signal for
+    # entity searches like "Nvidia stock price". Used to narrow a date-range
+    # search so a specific entity isn't drowned out by generic recent articles.
+    proper_terms = re.findall(r"\b[A-ZА-ЯЁ][a-zа-яё]{2,}\b", message)
+    proper_keywords = [kw.lower() for kw in proper_terms
+                        if kw.lower() not in stopwords and kw.lower() not in _MONTH_WORDS]
+    seen2: set[str] = set()
+    proper_keywords = [kw for kw in proper_keywords if not (kw in seen2 or seen2.add(kw))][:5]
+
     query = db.query(Article)
+    if date_range:
+        s, e, _ = date_range
+        query = query.filter(or_(
+            and_(Article.published_at.isnot(None), Article.published_at >= s, Article.published_at < e),
+            and_(Article.published_at.is_(None), Article.fetched_at >= s, Article.fetched_at < e),
+        ))
+
+    # If we have a date range AND a likely entity name, try a tighter match
+    # first — a broad OR over generic keywords across a wide window tends to
+    # drown the entity out with unrelated, more-recent articles.
+    if date_range and proper_keywords:
+        entity_conditions = []
+        for kw in proper_keywords:
+            pat = f"%{kw}%"
+            entity_conditions += [Article.title.ilike(pat), Article.summary.ilike(pat), Article.content.ilike(pat)]
+        entity_query = query.filter(or_(*entity_conditions))
+        entity_total = entity_query.count()
+        if entity_total:
+            rows = (
+                entity_query.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
+                .limit(limit).all()
+            )
+            note = (
+                f"{entity_total} article(s) mentioning {'/'.join(proper_keywords)} were found "
+                f"{date_range[2]}; showing the {len(rows)} most recent."
+            )
+            return rows, note
+
     if keywords:
         conditions = []
         for kw in keywords:
             pat = f"%{kw}%"
-            conditions.append(Article.title.ilike(pat))
-            conditions.append(Article.summary.ilike(pat))
-            conditions.append(Article.content.ilike(pat))
+            conditions += [Article.title.ilike(pat), Article.summary.ilike(pat), Article.content.ilike(pat)]
         query = query.filter(or_(*conditions))
 
+    # Exact count only when a (selective) date filter is present — a COUNT with
+    # ILIKE over the whole table for keyword-only queries would be too slow.
+    total = query.count() if date_range else None
     rows = (
         query.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
-        .limit(limit)
-        .all()
+        .limit(limit).all()
     )
-    # If keywords matched nothing, fall back to the latest articles so the chat
-    # at least sees the freshest news.
-    if not rows:
-        rows = (
-            db.query(Article)
-            .order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
-            .limit(limit)
-            .all()
-        )
-    return rows
+
+    if rows:
+        if date_range and keywords:
+            note = f"{total} article(s) match the query {date_range[2]}; showing the {len(rows)} most recent."
+        elif date_range:
+            note = f"{total} article(s) were published {date_range[2]}; showing the {len(rows)} most recent."
+        elif keywords:
+            note = f"the {len(rows)} most relevant articles matching your query (searched the full database, newest first)."
+        else:
+            note = f"the {len(rows)} latest articles."
+        return rows, note
+
+    # No matches. For an explicit date, an empty result IS the answer.
+    if date_range:
+        return [], f"No articles were found published {date_range[2]}."
+    # Otherwise fall back to the latest so the chat is never cold.
+    rows = (
+        db.query(Article)
+        .order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
+        .limit(limit).all()
+    )
+    return rows, f"No direct matches; showing the {len(rows)} latest articles instead."
 
 
-def _build_articles_context(articles: list[Article]) -> tuple[str, list[dict]]:
+def _build_articles_context(articles: list[Article], compact: bool = False, start: int = 1) -> tuple[str, list[dict]]:
+    """Build the AI context block + UI reference list for a set of articles.
+
+    ``compact`` emits one terse line per article (title + meta, no body) so large
+    sets (hundreds–thousands) fit in the context window for bulk analysis.
+    ``start`` sets the first [A-N] index (for consistent numbering across chunks).
+    """
     if not articles:
         return "(No articles in the local database yet.)", []
     refs: list[dict] = []
     blocks: list[str] = []
-    for i, a in enumerate(articles, 1):
+    for i, a in enumerate(articles, start):
         published = a.published_at.isoformat() if a.published_at else "unknown"
-        excerpt = (a.summary or a.content or "")[:600]
-        blocks.append(
-            f"[A-{i}] {a.title or '(no title)'}\n"
-            f"    Source: {a.source or 'unknown'} | Published: {published} | Category: {a.category or '-'}\n"
-            f"    {excerpt}"
-        )
-        refs.append({
-            "kind": "article",
-            "id": a.id,
-            "title": a.title,
-            "url": a.url,
-            "source": a.source,
-            "published_at": published,
-            "snippet": (a.summary or excerpt[:200]) if (a.summary or excerpt) else None,
-        })
-    return "\n\n".join(blocks), refs
+        if compact:
+            blocks.append(
+                f"[A-{i}] {a.title or '(no title)'} | {a.source or '-'} | {published[:16]} | {a.category or '-'}"
+            )
+        else:
+            excerpt = (a.summary or a.content or "")[:600]
+            blocks.append(
+                f"[A-{i}] {a.title or '(no title)'}\n"
+                f"    Source: {a.source or 'unknown'} | Published: {published} | Category: {a.category or '-'}\n"
+                f"    {excerpt}"
+            )
+        # Cap the UI reference list in compact mode — thousands of chips is unusable.
+        if not compact or i <= 40:
+            excerpt = (a.summary or a.content or "")[:200]
+            refs.append({
+                "kind": "article",
+                "id": a.id,
+                "title": a.title,
+                "url": a.url,
+                "source": a.source,
+                "published_at": published,
+                "snippet": (a.summary or excerpt) if (a.summary or excerpt) else None,
+            })
+    sep = "\n" if compact else "\n\n"
+    return sep.join(blocks), refs
 
 
 def _parse_chat_response(raw: str) -> tuple[str, Optional[str], bool]:
@@ -938,6 +1708,74 @@ def _parse_chat_response(raw: str) -> tuple[str, Optional[str], bool]:
     return text, suggested, needs_web
 
 
+_CHAT_CHUNK_SIZE = 2000         # default articles per map step (configurable in Settings)
+_MAX_CHAINED_ARTICLES = 10000   # ceiling for chained bulk analysis
+_CHAIN_CONCURRENCY = 4          # parallel map calls
+_MAX_SUMMARY_ARTICLES = 50000   # ceiling for "All" max_articles on /summary
+
+
+async def _map_chunk(
+    idx: int, n_chunks: int, chunk: list[Article], start_index: int,
+    message: str, base_prompt: str, db, sem: asyncio.Semaphore,
+    ai_provider: Optional[str] = None, ai_model: Optional[str] = None,
+) -> str:
+    """Map step: summarize one batch of articles into a short digest."""
+    from ..services.tagger import _is_rate_limit_error, _parse_retry_delay
+
+    block, _ = _build_articles_context(chunk, compact=True, start=start_index)
+    system = (
+        f"{base_prompt}\n\nYou are analyzing batch {idx + 1} of {n_chunks} from a large set of recent "
+        f"news articles (headlines + metadata). Produce a concise digest of THIS batch: 4-7 bullet points "
+        f"capturing the main themes, key events, recurring countries/topics, and notable developments. "
+        f"Be specific and cite article numbers as [A-N]. No preamble."
+    )
+    user = f"ARTICLES (batch {idx + 1}/{n_chunks}):\n{block}\n\nUser's overall request: {message}"
+    async with sem:
+        for attempt in range(3):
+            try:
+                return await call_ai(system=system, user=user, max_tokens=700, provider=ai_provider, model=ai_model, db=db)
+            except Exception as exc:
+                if _is_rate_limit_error(str(exc)) and attempt < 2:
+                    await asyncio.sleep(min((_parse_retry_delay(str(exc)) or 5) + 1, 30))
+                    continue
+                raise
+
+
+async def _chained_analysis(
+    message: str, articles: list[Article], base_prompt: str, db, chunk_size: int = _CHAT_CHUNK_SIZE,
+    task: str = "summary",
+) -> tuple[str, list[dict]]:
+    """Map-reduce bulk analysis: digest each batch, then synthesize the digests."""
+    ai_provider, ai_model = await get_ai_settings_for_task(task, db)
+    chunk_size = max(50, chunk_size)
+    chunks = [articles[i:i + chunk_size] for i in range(0, len(articles), chunk_size)]
+    sem = asyncio.Semaphore(_CHAIN_CONCURRENCY)
+    tasks = [
+        _map_chunk(i, len(chunks), c, i * chunk_size + 1, message, base_prompt, db, sem, ai_provider, ai_model)
+        for i, c in enumerate(chunks)
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    digests = [(i, r) for i, r in enumerate(results) if isinstance(r, str) and r.strip()]
+    failed = len(chunks) - len(digests)
+    if not digests:
+        raise RuntimeError(results[0] if results else "all batch analyses failed")
+
+    joined = "\n\n".join(f"### Batch {i + 1}\n{d}" for i, d in digests)
+    reduce_system = (
+        f"{base_prompt}\n\nYou are given digests of {len(chunks)} batches covering {len(articles)} recent "
+        f"articles. Synthesize ONE coherent analysis that answers the user's request: merge overlapping "
+        f"themes, rank developments by importance, surface cross-batch trends, and note the dominant "
+        f"countries/topics. Cite [A-N] where useful. Be specific; avoid vague filler."
+    )
+    reduce_user = f"User request: {message}\n\n=== BATCH DIGESTS ===\n{joined}"
+    final = await call_ai(system=reduce_system, user=reduce_user, max_tokens=4096, provider=ai_provider, model=ai_model, db=db)
+
+    note = f"_Analyzed {len(articles)} articles in {len(chunks)} batches of {chunk_size}"
+    note += f" ({failed} batch(es) skipped due to errors)._\n\n" if failed else "._\n\n"
+    _, refs = _build_articles_context(articles[:60], compact=True)
+    return note + final, refs
+
+
 @router.post("/chat")
 async def chat(body: ChatRequest, db: Session = Depends(get_db)):
     base_prompt = _get_prompt(db, "chat_system_prompt", DEFAULT_CHAT_SYSTEM_PROMPT)
@@ -953,7 +1791,7 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
         query = (body.web_query or body.message).strip()
         # Still ground in the local articles too, so the AI's web research is
         # contextualized against what we already know.
-        articles = _gather_chat_articles(body.message, db, limit=15)
+        articles, _scope = _gather_chat_articles(body.message, db, limit=20)
         articles_block, article_refs = _build_articles_context(articles)
         system = (
             f"{base_prompt}\n\n"
@@ -964,7 +1802,8 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
         )
 
         try:
-            grounded = await call_ai_grounded(system=system, user=user_prompt, max_tokens=2000, db=db)
+            ai_provider, ai_model = await get_ai_settings_for_task("chat", db)
+            grounded = await call_ai_grounded(system=system, user=user_prompt, max_tokens=2000, provider=ai_provider, model=ai_model, db=db)
         except Exception as exc:
             logger.error("Chat AI (grounded) call failed: %s", exc)
             raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
@@ -987,15 +1826,44 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
         }
 
     # ── Branch B: normal chat — answer from local articles, always suggest a follow-up search ──
-    articles = _gather_chat_articles(body.message, db, limit=25)
-    articles_block, article_refs = _build_articles_context(articles)
+    requested = _parse_requested_count(body.message)
+
+    # Large bulk request ("analyze last 10000 articles") → map-reduce chaining:
+    # digest the articles in batches of chat_chunk_size, then synthesize.
+    chunk_size = max(50, _get_int_setting(db, "chat_chunk_size", _CHAT_CHUNK_SIZE))
+    if requested and requested > chunk_size:
+        articles, _scope = _gather_chat_articles(body.message, db, limit=min(requested, _MAX_CHAINED_ARTICLES))
+        if len(articles) > chunk_size:
+            try:
+                text, refs = await _chained_analysis(body.message, articles, base_prompt, db, chunk_size=chunk_size, task="chat")
+            except Exception as exc:
+                logger.error("Chained chat analysis failed: %s", exc)
+                raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")
+            return {"response": text, "references": refs, "suggested_web_query": None}
+        # Too few to chain — answer single-shot with what we have.
+        compact, scope_note = len(articles) > 80, _scope
+    else:
+        limit = min(requested, _MAX_CHAINED_ARTICLES) if requested else 50
+        compact = bool(requested) and limit > 80
+        articles, scope_note = _gather_chat_articles(body.message, db, limit=limit)
+        if requested and requested > len(articles):
+            scope_note += (
+                f" (you requested {requested}; using the {len(articles)} most recent — the maximum that fits)"
+                if len(articles) >= _MAX_CHAT_ARTICLES
+                else f" (you requested {requested}; only {len(articles)} are available)"
+            )
+
+    articles_block, article_refs = _build_articles_context(articles, compact=compact)
 
     system = (
         f"{base_prompt}\n\n"
-        f"You have {len(articles)} local article(s) below. Treat them as your primary source.\n\n"
-        f"=== LOCAL ARTICLES ===\n{articles_block}\n\n"
+        f"These articles were retrieved by searching the FULL local database for the user's query "
+        f"(by date and/or keywords) — they are not just the latest items. Search scope: {scope_note}\n\n"
+        f"=== LOCAL ARTICLES ({len(articles)}) ===\n{articles_block}\n\n"
         f"INSTRUCTIONS:\n"
         f"• Answer the user's question grounded in the articles above. Cite specific ones with [A-N] tags inline.\n"
+        f"• The 'Search scope' line is authoritative about how many articles matched — do NOT claim you "
+        f"\"only have N articles\" or that none match a date when the scope says otherwise.\n"
         f"• If the articles do not cover the question, say so plainly and use prior general knowledge.\n"
         f"• On the LAST line, output a follow-up web search query that would enrich the answer, formatted EXACTLY as:\n"
         f"  {_SUGGEST_MARKER} <one short Google-style query>\n"
@@ -1005,7 +1873,8 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
     )
 
     try:
-        raw = await call_ai(system=system, user=user_prompt, max_tokens=1500, db=db)
+        ai_provider, ai_model = await get_ai_settings_for_task("chat", db)
+        raw = await call_ai(system=system, user=user_prompt, max_tokens=1500, provider=ai_provider, model=ai_model, db=db)
     except Exception as exc:
         logger.error("Chat AI call failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI call failed: {exc}")

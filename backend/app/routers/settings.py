@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..config import (
+    AI_TASKS,
     DEFAULT_ANALYSIS_FOCUS_PRESETS,
     DEFAULT_ARTICLE_SUMMARIZE_PROMPT,
     DEFAULT_ASK_SYSTEM_PROMPT,
@@ -52,11 +53,14 @@ _SECRET_KEYS = [
 _NON_SECRET_KEYS = [
     "default_ai_provider",
     "default_ai_model",
+    "secondary_ai_provider",
+    "secondary_ai_model",
     "custom_ai_endpoint",
     "custom_ai_model",
     "auto_analyze_enabled",
     "fetch_interval_minutes",
     "auto_tag_interval_minutes",
+    "chat_chunk_size",
     "entertainment_keywords",
 ]
 
@@ -97,8 +101,15 @@ def get_settings(db: Session = Depends(get_db)):
 
     default_provider = _effective_value(db, "default_ai_provider") or "anthropic"
     default_model = _effective_value(db, "default_ai_model") or "claude-sonnet-4-6"
+    secondary_provider = _effective_value(db, "secondary_ai_provider") or ""
+    secondary_model = _effective_value(db, "secondary_ai_model") or ""
     custom_endpoint = _effective_value(db, "custom_ai_endpoint") or None
     custom_model = _effective_value(db, "custom_ai_model") or None
+
+    ai_task_assignments = {
+        task: (_db_get(db, f"ai_task_{task}") or "primary")
+        for task in AI_TASKS
+    }
 
     chat_override = _db_get(db, "chat_system_prompt") or ""
     ask_override = _db_get(db, "ask_system_prompt") or ""
@@ -141,6 +152,15 @@ def get_settings(db: Session = Depends(get_db)):
     else:
         auto_tag_interval = max(1, int(settings.auto_tag_interval_minutes))
 
+    chunk_override = _db_get(db, "chat_chunk_size")
+    if chunk_override:
+        try:
+            chat_chunk_size = max(50, int(chunk_override))
+        except (ValueError, TypeError):
+            chat_chunk_size = max(50, int(settings.chat_chunk_size))
+    else:
+        chat_chunk_size = max(50, int(settings.chat_chunk_size))
+
     ent_override = _db_get(db, "entertainment_keywords") or ""
     ent_effective = ent_override if ent_override.strip() else DEFAULT_ENTERTAINMENT_KEYWORDS_STR
 
@@ -148,6 +168,10 @@ def get_settings(db: Session = Depends(get_db)):
         **key_statuses,
         default_ai_provider=default_provider,
         default_ai_model=default_model,
+        secondary_ai_provider=secondary_provider,
+        secondary_ai_model=secondary_model,
+        ai_task_assignments=ai_task_assignments,
+        ai_tasks=AI_TASKS,
         custom_ai_endpoint=custom_endpoint,
         custom_ai_model=custom_model,
         chat_system_prompt=chat_effective,
@@ -177,6 +201,7 @@ def get_settings(db: Session = Depends(get_db)):
         auto_analyze_enabled=auto_analyze,
         fetch_interval_minutes=fetch_interval,
         auto_tag_interval_minutes=auto_tag_interval,
+        chat_chunk_size=chat_chunk_size,
         entertainment_keywords=ent_effective,
         entertainment_keywords_default=DEFAULT_ENTERTAINMENT_KEYWORDS_STR,
         entertainment_keywords_customized=bool(ent_override.strip()),
@@ -414,8 +439,9 @@ _RESETTABLE_KEYS = {
     "summary_system_prompt", "article_summarize_prompt", "stock_system_prompt",
     "image_analysis_prompt", "link_analysis_prompt",
     "custom_ai_endpoint", "custom_ai_model",
+    "secondary_ai_provider", "secondary_ai_model",
     "entertainment_keywords",
-}
+} | {f"ai_task_{task}" for task in AI_TASKS}
 
 
 @router.delete("/{key}")
@@ -442,10 +468,22 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db)):
         "image_analysis_prompt", "link_analysis_prompt", "entertainment_keywords",
     }
     _bool_keys = {"auto_analyze_enabled"}
-    _int_keys = {"fetch_interval_minutes", "auto_tag_interval_minutes"}
+    _int_keys = {"fetch_interval_minutes", "auto_tag_interval_minutes", "chat_chunk_size"}
 
     for key, value in update_dict.items():
         if value is None:
+            continue
+
+        # Per-task AI provider routing: {"chat": "primary"|"secondary", ...}
+        if key == "ai_task_assignments":
+            for task, assignment in value.items():
+                if task not in AI_TASKS:
+                    continue
+                assignment = str(assignment).strip().lower()
+                if assignment not in ("primary", "secondary"):
+                    continue
+                _set_db(db, f"ai_task_{task}", assignment)
+                updated_keys.append(f"ai_task_{task}")
             continue
 
         # Integers: clamp then store as string

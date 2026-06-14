@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Article, MindMap
 from ..schemas import MindMapOut, MindMapRequest
-from ..services.ai_client import call_ai, call_ai_grounded, get_current_ai_settings
+from ..services.ai_client import call_ai, call_ai_grounded, get_ai_settings_for_task
 from ..services.search_service import multi_engine_search
 
 router = APIRouter()
@@ -169,7 +169,7 @@ def list_mindmaps(
 
 @router.post("/generate", response_model=MindMapOut)
 async def generate_mindmap(body: MindMapRequest, db: Session = Depends(get_db)):
-    provider, model = await get_current_ai_settings(db)
+    provider, model = await get_ai_settings_for_task("mindmap", db)
     grounding_articles = _fetch_grounding_articles(db, body)
     grounding = _build_grounding_block(grounding_articles)
     if grounding:
@@ -204,6 +204,8 @@ async def generate_mindmap(body: MindMapRequest, db: Session = Depends(get_db)):
                 system=system_grounded,
                 user=prompt,
                 max_tokens=4096,
+                provider=provider,
+                model=model,
                 db=db,
             )
             raw = grounded.text
@@ -216,6 +218,8 @@ async def generate_mindmap(body: MindMapRequest, db: Session = Depends(get_db)):
                 system=system,
                 user=prompt,
                 max_tokens=4096,
+                provider=provider,
+                model=model,
                 db=db,
             )
         map_data = _parse_json(raw)

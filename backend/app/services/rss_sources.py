@@ -244,6 +244,41 @@ RSS_FEEDS: dict[str, list[str]] = {
         # EU institutions
         "https://feeds.feedburner.com/euobserver/rss",
         "https://www.consilium.europa.eu/en/rss/news",
+        # --- Additional verified feeds (synced from DB) ---
+        # United Kingdom / Ireland
+        "https://www.standard.co.uk/rss",
+        "https://metro.co.uk/feed/",
+        "https://www.mirror.co.uk/news/?service=rss",
+        "https://www.heraldscotland.com/news/rss/",
+        "https://www.dailymail.co.uk/news/index.rss",
+        "https://www.thejournal.ie/feed/",
+        # France
+        "https://www.rfi.fr/fr/rss",
+        "https://www.nouvelobs.com/rss.xml",
+        # Italy
+        "https://www.adnkronos.com/RSS_PrimaPagina.xml",
+        "https://www.open.online/feed/",
+        # Netherlands
+        "https://www.ad.nl/home/rss.xml",
+        # Germany
+        "https://www.deutschland.de/en/feed",
+        # Austria
+        "https://kurier.at/xml/rss",
+        # Greece
+        "https://greekreporter.com/feed/",
+        # Bulgaria
+        "https://www.novinite.com/services/news_rdf.php",
+        "https://sofiaglobe.com/feed/",
+        # Croatia / Balkans
+        "https://www.total-croatia-news.com/feed/",
+        "https://balkaninsight.com/feed/",
+        # Iceland
+        "https://grapevine.is/feed/",
+        # Baltics
+        "https://news.err.ee/rss",
+        "https://eng.lsm.lv/rss/",
+        # EU
+        "https://eunews.it/en/feed/",
     ],
     "georgia": [
         # English — verified working

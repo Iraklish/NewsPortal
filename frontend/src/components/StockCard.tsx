@@ -42,6 +42,7 @@ function MetricItem({ label, value }: { label: string; value: React.ReactNode })
 
 export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
   const [chatOpen, setChatOpen] = useState(false)
+  const [referencesOpen, setReferencesOpen] = useState(false)
   const [maximized, setMaximized] = useState(false)
   const isPositive = (analysis.change_pct ?? 0) >= 0
   const chartColor = isPositive ? '#10b981' : '#ef4444'
@@ -253,9 +254,14 @@ export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
       {/* References, links & sources */}
       {(analysis.references ?? []).length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+          <button
+            onClick={() => setReferencesOpen(v => !v)}
+            className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 hover:text-white transition-colors"
+          >
+            {referencesOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             References &amp; Sources ({analysis.references!.length})
-          </p>
+          </button>
+          {referencesOpen && (
           <div className="space-y-1.5">
             {analysis.references!.map((ref, i) => {
               const isLink = !!ref.url && /^https?:\/\//i.test(ref.url)
@@ -285,6 +291,7 @@ export default function StockCard({ analysis }: { analysis: StockAnalysis }) {
               )
             })}
           </div>
+          )}
         </div>
       )}
 

@@ -56,6 +56,22 @@ def _get_api_key(key_name: str, db=None) -> str:
     return getattr(settings, key_name, "")
 
 
+async def get_ai_settings_for_task(task: str, db=None) -> tuple[str, str]:
+    """Return (provider, model) for a given AI task, honoring the per-task
+    primary/secondary routing configured in Settings. Falls back to the
+    primary provider/model when no secondary is configured or assigned."""
+    provider, model = await get_current_ai_settings(db)
+
+    assignment = _get_api_key(f"ai_task_{task}", db) or "primary"
+    if assignment == "secondary":
+        sec_provider = _get_api_key("secondary_ai_provider", db)
+        sec_model = _get_api_key("secondary_ai_model", db)
+        if sec_provider:
+            return sec_provider, sec_model or model
+
+    return provider, model
+
+
 # ── Provider implementations ──────────────────────────────────────────────────
 
 def _call_anthropic(api_key: str, model: str, system: str, user: str, max_tokens: int) -> str:
@@ -88,6 +104,22 @@ def _call_openai(api_key: str, model: str, system: str, user: str, max_tokens: i
     return response.choices[0].message.content
 
 
+# Disable all Gemini safety filters (equivalent to the old
+# google.generativeai SAFETY_SETTINGS = {... : BLOCK_NONE} for the new
+# google-genai SDK). Built lazily because `types` is imported per-call.
+def _gemini_safety_settings(types):
+    return [
+        types.SafetySetting(category=c, threshold="BLOCK_NONE")
+        for c in (
+            "HARM_CATEGORY_HARASSMENT",
+            "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "HARM_CATEGORY_CIVIC_INTEGRITY",
+        )
+    ]
+
+
 def _call_gemini(api_key: str, model: str, system: str, user: str, max_tokens: int) -> str:
     from google import genai
     from google.genai import types
@@ -98,6 +130,7 @@ def _call_gemini(api_key: str, model: str, system: str, user: str, max_tokens: i
         config=types.GenerateContentConfig(
             system_instruction=system,
             max_output_tokens=max_tokens,
+            safety_settings=_gemini_safety_settings(types),
         ),
     )
     return response.text
@@ -236,19 +269,26 @@ def _vision_gemini(api_key, model, system, user, image_bytes, mime, max_tokens):
     r = client.models.generate_content(
         model=model,
         contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime), user],
-        config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=max_tokens),
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            safety_settings=_gemini_safety_settings(types),
+        ),
     )
     return r.text
 
 
 async def call_ai_vision(system: str, user: str, image_bytes: bytes, mime: str = "image/jpeg",
-                         max_tokens: int = 1500, db=None) -> str:
+                         max_tokens: int = 1500, provider: Optional[str] = None,
+                         model: Optional[str] = None, db=None) -> str:
     """Analyze an image with the configured (vision-capable) provider.
 
     Supports Anthropic, OpenAI/custom/DeepSeek (OpenAI-compatible), and Gemini.
     """
     import base64
-    provider, model = await get_current_ai_settings(db)
+    resolved_provider, resolved_model = await get_current_ai_settings(db)
+    provider = provider or resolved_provider
+    model = model or resolved_model
     loop = asyncio.get_event_loop()
     b64 = base64.b64encode(image_bytes).decode()
 
@@ -308,6 +348,7 @@ def _call_gemini_grounded(api_key: str, model: str, system: str, user: str, max_
                     system_instruction=system,
                     max_output_tokens=max_tokens,
                     tools=[tool],
+                    safety_settings=_gemini_safety_settings(types),
                 ),
             )
             break
